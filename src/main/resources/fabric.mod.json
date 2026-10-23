@@ -1,0 +1,45 @@
+{
+	"schemaVersion": 1,
+	"id": "schematic_cannon",
+	"version": "${version}",
+	"name": "Schematic Cannon",
+	"description": "Save structures as schematics, upload them at the Schematic Table and let the Schematicannon build them block by block. Based on the schematics of Create.",
+	"authors": [
+		"BSHarou"
+	],
+	"contributors": [
+		"simibubi and The Create Team (original Create code)"
+	],
+	"contact": {
+		"homepage": "https://modrinth.com/mod/schematic-cannon",
+		"sources": "https://github.com/martinkadlec0/schematic-cannon",
+		"issues": "https://github.com/martinkadlec0/schematic-cannon/issues"
+	},
+	"license": "MIT",
+	"icon": "assets/schematic_cannon/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"net.harou.schematiccannon.SchematicCannon"
+		],
+		"client": [
+			"net.harou.schematiccannon.client.SchematicCannonClient"
+		],
+		"modmenu": [
+			"net.harou.schematiccannon.client.ModMenuIntegration"
+		]
+	},
+	"mixins": [
+		"schematic_cannon.mixins.json"
+	],
+	"accessWidener": "schematic_cannon.accesswidener",
+	"depends": {
+		"fabricloader": ">=${loader_version}",
+		"minecraft": ">=${min_minecraft_version} <${restrict_minecraft_version}",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
+	}
+}

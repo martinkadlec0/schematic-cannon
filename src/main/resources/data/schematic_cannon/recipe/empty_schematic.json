@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "N": "minecraft:iron_nugget",
+    "P": "minecraft:paper",
+    "S": "#minecraft:wooden_slabs"
+  },
+  "pattern": [
+    "N",
+    "P",
+    "S"
+  ],
+  "result": {
+    "count": 1,
+    "id": "schematic_cannon:empty_schematic"
+  }
+}

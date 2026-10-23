@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "C": "#c:ingots/copper",
+    "D": "minecraft:dispenser",
+    "I": "minecraft:iron_block",
+    "S": "minecraft:smooth_stone"
+  },
+  "pattern": [
+    " I ",
+    "CIC",
+    "SDS"
+  ],
+  "result": {
+    "count": 1,
+    "id": "schematic_cannon:schematicannon"
+  }
+}

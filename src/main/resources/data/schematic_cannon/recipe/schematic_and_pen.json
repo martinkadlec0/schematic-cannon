@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "schematic_cannon:empty_schematic",
+    "minecraft:ink_sac",
+    "minecraft:copper_nugget"
+  ],
+  "result": {
+    "count": 1,
+    "id": "schematic_cannon:schematic_and_pen"
+  }
+}

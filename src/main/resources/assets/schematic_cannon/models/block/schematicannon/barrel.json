@@ -1,0 +1,287 @@
+{
+	"parent": "block/block",
+	"textures": {
+		"gunmetal": "schematic_cannon:block/schematicannon_gunmetal",
+		"muzzle": "schematic_cannon:block/schematicannon_muzzle",
+		"details": "schematic_cannon:block/schematicannon_details",
+		"particle": "schematic_cannon:block/schematicannon_steel"
+	},
+	"elements": [
+		{
+			"name": "barrel",
+			"from": [
+				6.5,
+				20,
+				6.5
+			],
+			"to": [
+				9.5,
+				29,
+				9.5
+			],
+			"faces": {
+				"north": {
+					"uv": [
+						6.5,
+						3.5,
+						9.5,
+						12.5
+					],
+					"texture": "#gunmetal"
+				},
+				"east": {
+					"uv": [
+						6.5,
+						3.5,
+						9.5,
+						12.5
+					],
+					"texture": "#gunmetal"
+				},
+				"south": {
+					"uv": [
+						6.5,
+						3.5,
+						9.5,
+						12.5
+					],
+					"texture": "#gunmetal"
+				},
+				"west": {
+					"uv": [
+						6.5,
+						3.5,
+						9.5,
+						12.5
+					],
+					"texture": "#gunmetal"
+				},
+				"up": {
+					"uv": [
+						6.5,
+						6.5,
+						9.5,
+						9.5
+					],
+					"texture": "#gunmetal"
+				},
+				"down": {
+					"uv": [
+						6.5,
+						6.5,
+						9.5,
+						9.5
+					],
+					"texture": "#gunmetal"
+				}
+			}
+		},
+		{
+			"name": "ring_lower",
+			"from": [
+				6,
+				22,
+				6
+			],
+			"to": [
+				10,
+				23,
+				10
+			],
+			"faces": {
+				"north": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"east": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"south": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"west": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"up": {
+					"uv": [
+						0,
+						12,
+						4,
+						16
+					],
+					"texture": "#details"
+				},
+				"down": {
+					"uv": [
+						0,
+						12,
+						4,
+						16
+					],
+					"texture": "#details"
+				}
+			}
+		},
+		{
+			"name": "ring_upper",
+			"from": [
+				4.5,
+				26,
+				6
+			],
+			"to": [
+				10,
+				27,
+				10
+			],
+			"faces": {
+				"north": {
+					"uv": [
+						5.25,
+						13,
+						10.75,
+						14
+					],
+					"texture": "#details"
+				},
+				"east": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"south": {
+					"uv": [
+						5.25,
+						13,
+						10.75,
+						14
+					],
+					"texture": "#details"
+				},
+				"west": {
+					"uv": [
+						6,
+						13,
+						10,
+						14
+					],
+					"texture": "#details"
+				},
+				"up": {
+					"uv": [
+						0,
+						12,
+						4,
+						16
+					],
+					"texture": "#details"
+				},
+				"down": {
+					"uv": [
+						0,
+						12,
+						4,
+						16
+					],
+					"texture": "#details"
+				}
+			}
+		},
+		{
+			"name": "muzzle_brake",
+			"from": [
+				5.5,
+				28.5,
+				5.5
+			],
+			"to": [
+				10.5,
+				32,
+				10.5
+			],
+			"faces": {
+				"north": {
+					"uv": [
+						5.5,
+						4,
+						10.5,
+						7.5
+					],
+					"texture": "#details"
+				},
+				"east": {
+					"uv": [
+						5.5,
+						4,
+						10.5,
+						7.5
+					],
+					"texture": "#details"
+				},
+				"south": {
+					"uv": [
+						5.5,
+						4,
+						10.5,
+						7.5
+					],
+					"texture": "#details"
+				},
+				"west": {
+					"uv": [
+						5.5,
+						4,
+						10.5,
+						7.5
+					],
+					"texture": "#details"
+				},
+				"up": {
+					"uv": [
+						5.5,
+						5.5,
+						10.5,
+						10.5
+					],
+					"texture": "#muzzle"
+				},
+				"down": {
+					"uv": [
+						5.5,
+						5.5,
+						10.5,
+						10.5
+					],
+					"texture": "#gunmetal"
+				}
+			}
+		}
+	]
+}

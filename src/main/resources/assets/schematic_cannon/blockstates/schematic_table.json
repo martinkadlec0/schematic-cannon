@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=east": {
+      "model": "schematic_cannon:block/schematic_table",
+      "y": 270
+    },
+    "facing=north": {
+      "model": "schematic_cannon:block/schematic_table",
+      "y": 180
+    },
+    "facing=south": {
+      "model": "schematic_cannon:block/schematic_table"
+    },
+    "facing=west": {
+      "model": "schematic_cannon:block/schematic_table",
+      "y": 90
+    }
+  }
+}

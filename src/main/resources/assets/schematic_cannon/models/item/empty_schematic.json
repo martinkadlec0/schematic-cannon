@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "schematic_cannon:item/empty_schematic"
+  }
+}

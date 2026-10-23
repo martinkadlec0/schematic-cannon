@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "schematic_cannon:item/empty_schematic"
+  }
+}

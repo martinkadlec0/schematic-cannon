@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "schematic_cannon:block/schematicannon/block"
+    }
+  }
+}

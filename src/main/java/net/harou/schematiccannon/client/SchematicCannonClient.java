@@ -12,17 +12,24 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.fabricmc.fabric.api.item.v1.ItemComponentTooltipProviderRegistry;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.harou.schematiccannon.SchematicCannon;
 import net.harou.schematiccannon.client.gui.ItemDescriptions;
+import net.harou.schematiccannon.client.gui.TooltipHelper;
 import net.harou.schematiccannon.client.outline.Outliner;
 import net.harou.schematiccannon.client.render.ModBufferSource;
 import net.harou.schematiccannon.client.screen.SchematicEditScreen;
 import net.harou.schematiccannon.client.screen.SchematicTableScreen;
 import net.harou.schematiccannon.client.screen.SchematicannonScreen;
 import net.harou.schematiccannon.network.ConfigSyncPacket;
+import net.harou.schematiccannon.network.SchematicCacheResetPacket;
+import net.harou.schematiccannon.network.SchematicDownloadPacket;
+import net.harou.schematiccannon.network.SchematicPlacementPacket;
 import net.harou.schematiccannon.registry.ModBlockEntityTypes;
+import net.harou.schematiccannon.registry.ModDataComponents;
 import net.harou.schematiccannon.registry.ModMenuTypes;
+import net.harou.schematiccannon.schematic.source.SchematicSources;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
@@ -34,6 +41,7 @@ import net.minecraft.world.phys.Vec3;
 public class SchematicCannonClient implements ClientModInitializer {
 
 	public static final ClientSchematicLoader SCHEMATIC_SENDER = new ClientSchematicLoader();
+	public static final ClientSchematicCache SCHEMATIC_CACHE = new ClientSchematicCache();
 	public static final SchematicHandler SCHEMATIC_HANDLER = new SchematicHandler();
 	public static final SchematicAndPenHandler SCHEMATIC_AND_PEN_HANDLER = new SchematicAndPenHandler();
 
@@ -41,6 +49,11 @@ public class SchematicCannonClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		ModKeys.register();
 		ItemDescriptions.register();
+		// Tooltips are built from the components, so the lines hang on the marker every schematic item has; the
+		// schematic's source adds them (see SchematicSource#addToTooltip), wrapped here as tooltips don't wrap long lines
+		ItemComponentTooltipProviderRegistry.addLast(ModDataComponents.SCHEMATIC,
+			marker -> (context, tooltip, flag, components) -> SchematicSources.get(components)
+				.addToTooltip(components, line -> TooltipHelper.wrap(line, tooltip)));
 
 		MenuScreens.register(ModMenuTypes.SCHEMATICANNON, SchematicannonScreen::new);
 		MenuScreens.register(ModMenuTypes.SCHEMATIC_TABLE, SchematicTableScreen::new);
@@ -48,9 +61,22 @@ public class SchematicCannonClient implements ClientModInitializer {
 		ModelLoadingPlugin.register(SchematicannonRenderer::registerModels);
 
 		ClientPlayNetworking.registerGlobalReceiver(ConfigSyncPacket.TYPE, (packet, context) -> packet.apply());
+		ClientPlayNetworking.registerGlobalReceiver(SchematicDownloadPacket.TYPE,
+			(packet, context) -> SCHEMATIC_CACHE.onPart(packet));
+		ClientPlayNetworking.registerGlobalReceiver(SchematicPlacementPacket.TYPE,
+			(packet, context) -> SCHEMATIC_HANDLER.onPlacementChecked(packet.key(), packet.anchor(), packet.rotation(),
+				packet.mirror(), packet.reason()
+				.orElse(null)));
+		ClientPlayNetworking.registerGlobalReceiver(SchematicCacheResetPacket.TYPE, (packet, context) -> {
+			SCHEMATIC_CACHE.invalidate(packet::matches);
+			// Shown again with the new template on the next tick
+			if (SCHEMATIC_HANDLER.showsSchematic(packet::matches))
+				SCHEMATIC_HANDLER.onLevelChange();
+		});
 
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
 			SCHEMATIC_SENDER.cancelUploads();
+			SCHEMATIC_CACHE.clear();
 			SCHEMATIC_HANDLER.reset();
 			SCHEMATIC_AND_PEN_HANDLER.reset();
 			Outliner.getInstance()
@@ -75,6 +101,7 @@ public class SchematicCannonClient implements ClientModInitializer {
 		if (mc.level == null || mc.player == null)
 			return;
 		SCHEMATIC_SENDER.tick();
+		SCHEMATIC_CACHE.tick();
 		SCHEMATIC_AND_PEN_HANDLER.tick();
 		SCHEMATIC_HANDLER.tick();
 		Outliner.getInstance()

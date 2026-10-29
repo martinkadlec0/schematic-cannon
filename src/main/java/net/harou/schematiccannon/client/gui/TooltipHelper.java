@@ -5,13 +5,17 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.function.Consumer;
 
-import net.harou.schematiccannon.client.ModKeys;
+import com.mojang.blaze3d.systems.RenderSystem;
+
 import net.harou.schematiccannon.util.Lang;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 
@@ -30,9 +34,33 @@ public class TooltipHelper {
 	}
 
 	public static MutableComponent holdShift(boolean shiftDown) {
-		return Lang.translate("tooltip.holdForDescription", Component.literal(ModKeys.getSneakKeyName())
+		return Lang.translate("tooltip.holdForDescription", Component.literal("SHIFT")
 			.withStyle(shiftDown ? ChatFormatting.WHITE : ChatFormatting.GRAY))
 			.withStyle(ChatFormatting.DARK_GRAY);
+	}
+
+	/**
+	 * Splits a tooltip line wider than {@link #MAX_WIDTH_PER_LINE} into several, keeping its styles. Vanilla tooltips
+	 * don't wrap their lines.
+	 * <p>
+	 * Only on the render thread: tooltips are also built in the background for the creative inventory's search, where
+	 * measuring text could upload new glyphs to the GPU (only allowed on the render thread), and lines don't matter.
+	 */
+	public static void wrap(Component line, Consumer<Component> output) {
+		if (!RenderSystem.isOnRenderThread()) {
+			output.accept(line);
+			return;
+		}
+		for (FormattedText part : Minecraft.getInstance().font.getSplitter()
+			.splitLines(line, MAX_WIDTH_PER_LINE, Style.EMPTY)) {
+			MutableComponent wrapped = Component.empty();
+			part.visit((style, text) -> {
+				wrapped.append(Component.literal(text)
+					.withStyle(style));
+				return Optional.empty();
+			}, Style.EMPTY);
+			output.accept(wrapped);
+		}
 	}
 
 	/**

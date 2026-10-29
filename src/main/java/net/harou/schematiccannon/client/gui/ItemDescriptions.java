@@ -31,7 +31,7 @@ public class ItemDescriptions {
 				.getDescriptionId() + ".tooltip";
 			if (!Language.getInstance().has(key + ".summary"))
 				return;
-			lines.addAll(Math.min(1, lines.size()), getLines(key, ModKeys.sneakKeyDown()));
+			lines.addAll(Math.min(1, lines.size()), getLines(key, ModKeys.tooltipKeyDown()));
 		});
 	}
 

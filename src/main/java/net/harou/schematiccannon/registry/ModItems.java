@@ -25,6 +25,8 @@ public class ModItems {
 	public static final Item SCHEMATIC_AND_PEN =
 		register("schematic_and_pen", Item::new, new Item.Properties().stacksTo(1));
 
+	// Filled schematics do not stack: each one can have its own deployment (anchor, rotation, mirror). Letting only
+	// undeployed ones stack, but not deployed ones, would be very confusing in game.
 	public static final SchematicItem SCHEMATIC =
 		register("schematic", SchematicItem::new, new Item.Properties().stacksTo(1));
 

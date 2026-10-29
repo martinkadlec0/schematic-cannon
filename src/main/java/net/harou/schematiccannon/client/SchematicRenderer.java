@@ -11,6 +11,7 @@ import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.harou.schematiccannon.SchematicCannon;
 import net.harou.schematiccannon.client.render.VertexRecorder;
@@ -20,6 +21,7 @@ import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.client.renderer.block.BlockQuadOutput;
 import net.minecraft.client.renderer.block.BlockStateModelSet;
+import net.minecraft.client.renderer.block.FluidRenderer;
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
@@ -147,6 +149,8 @@ public class SchematicRenderer {
 		cutoutLeaves = mc.options.cutoutLeaves()
 			.get();
 		ModelBlockRenderer blockRenderer = new ModelBlockRenderer(ambientOcclusion, true, mc.getBlockColors());
+		FluidRenderer fluidRenderer = new FluidRenderer(mc.getModelManager()
+			.getFluidStateModelSet());
 		BlockQuadOutput output = (x, y, z, quad, instance) -> getMesh(quad.materialInfo()
 			.layer()).putBlockBakedQuad(x, y, z, quad, instance);
 		BlockQuadOutput solidOutput =
@@ -162,6 +166,14 @@ public class SchematicRenderer {
 			bounds.maxY(), bounds.maxZ())) {
 			BlockPos pos = mutableBlockPos.setWithOffset(localPos, anchor);
 			BlockState state = schematic.getBlockState(pos);
+			// Water and lava, also of waterlogged blocks; vanilla writes them at the position within the chunk section
+			FluidState fluid = state.getFluidState();
+			if (!fluid.isEmpty()) {
+				float dx = localPos.getX() - (pos.getX() & 15), dy = localPos.getY() - (pos.getY() & 15),
+					dz = localPos.getZ() - (pos.getZ() & 15);
+				fluidRenderer.tesselate(level, pos, layer -> new OffsetVertexConsumer(getMesh(layer), dx, dy, dz), state,
+					fluid);
+			}
 			if (state.getRenderShape() != RenderShape.MODEL)
 				continue;
 			blockRenderer.tesselateBlock(ModelBlockRenderer.forceOpaque(cutoutLeaves, state) ? solidOutput : output,
@@ -176,6 +188,66 @@ public class SchematicRenderer {
 			case CUTOUT -> RenderTypes.cutoutMovingBlock();
 			case TRANSLUCENT -> RenderTypes.translucentMovingBlock();
 		}, $ -> new VertexRecorder());
+	}
+
+	/**
+	 * Moves the vertices written into another consumer.
+	 */
+	private record OffsetVertexConsumer(VertexConsumer target, float dx, float dy, float dz) implements VertexConsumer {
+
+		@Override
+		public VertexConsumer addVertex(float x, float y, float z) {
+			target.addVertex(x + dx, y + dy, z + dz);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setColor(int r, int g, int b, int a) {
+			target.setColor(r, g, b, a);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setColor(int color) {
+			target.setColor(color);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setUv(float u, float v) {
+			target.setUv(u, v);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setUv1(int u, int v) {
+			target.setUv1(u, v);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setUv2(int u, int v) {
+			target.setUv2(u, v);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setUv3(float u, float v) {
+			target.setUv3(u, v);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setNormal(float x, float y, float z) {
+			target.setNormal(x, y, z);
+			return this;
+		}
+
+		@Override
+		public VertexConsumer setLineWidth(float width) {
+			target.setLineWidth(width);
+			return this;
+		}
 	}
 
 	/**

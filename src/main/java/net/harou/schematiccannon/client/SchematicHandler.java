@@ -2,24 +2,36 @@ package net.harou.schematiccannon.client;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
 
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4fc;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.Hud;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 import net.harou.schematiccannon.SchematicCannon;
 import net.harou.schematiccannon.client.gui.GuiTextures;
 import net.harou.schematiccannon.client.outline.AABBOutline;
 import net.harou.schematiccannon.client.render.ModBufferSource;
 import net.harou.schematiccannon.client.screen.ToolSelectionScreen;
+import net.harou.schematiccannon.client.tools.DeployTool;
+import net.harou.schematiccannon.client.tools.SchematicTool;
 import net.harou.schematiccannon.client.tools.ToolType;
 import net.harou.schematiccannon.network.SchematicPlacePacket;
 import net.harou.schematiccannon.network.SchematicSyncPacket;
 import net.harou.schematiccannon.registry.ModBlocks;
 import net.harou.schematiccannon.registry.ModDataComponents;
-import net.harou.schematiccannon.registry.ModItems;
 import net.harou.schematiccannon.schematic.SchematicItem;
 import net.harou.schematiccannon.schematic.level.SchematicLevel;
 import net.harou.schematiccannon.util.Lang;
@@ -38,6 +50,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.phys.AABB;
@@ -50,13 +63,78 @@ import net.minecraft.world.phys.Vec3;
 public class SchematicHandler {
 
 	private static final int SYNC_DELAY = 10;
+	/** Downloads that answer within this many ticks show no indicator, so it does not flicker */
+	private static final int DOWNLOAD_INDICATOR_DELAY = 5;
+	private static final int OUTLINE_COLOR = 0x6886c5;
+	private static final int INVALID_OUTLINE_COLOR = 0xd04040;
+	/** The action bar fades after a few seconds, so a lasting message (e.g. a placement problem) is shown again this often */
+	private static final int MESSAGE_REFRESH_TICKS = 40;
+	/** How long a message about something that happened (a tool's message, a failed download) is shown */
+	private static final int EVENT_MESSAGE_TICKS = 40;
 
+	/** The cache key of the shown schematic's source */
 	private String displayedSchematic;
+	/** Deployed, but the template is still downloading */
+	private boolean waitingForTemplate;
+	/** The download's progress or failure, shown before placement problems, see {@link #updateActionBar} */
+	@Nullable
+	private Component downloadMessage;
+	private int downloadMessageTicks;
+	/** How long the answer to a sync is waited for, e.g. in case the server had another item in the slot */
+	private static final int SYNC_ANSWER_TIMEOUT = 200;
+	/** Our syncs the server hasn't answered yet, by inventory slot; see tickPendingSyncs */
+	private final Int2ObjectMap<PendingSync> pendingSyncs = new Int2ObjectOpenHashMap<>();
+
+	/** A placement of the schematic: where, turned and mirrored how */
+	private record Placement(BlockPos anchor, Rotation rotation, Mirror mirror) {
+	}
+
+	/** The latest sync of a slot's schematic, until the server's answer to it arrives */
+	private static class PendingSync {
+		/** The schematic's cache key */
+		String schematic;
+		/** Of all syncs since the last answer, the latest last */
+		final IntList ids = new IntArrayList();
+		boolean deployed;
+		Placement placement;
+		int ticksLeft;
+
+		void applyTo(ItemStack stack) {
+			stack.set(ModDataComponents.SCHEMATIC_DEPLOYED, deployed);
+			stack.set(ModDataComponents.SCHEMATIC_ANCHOR, placement.anchor());
+			stack.set(ModDataComponents.SCHEMATIC_ROTATION, placement.rotation());
+			stack.set(ModDataComponents.SCHEMATIC_MIRROR, placement.mirror());
+		}
+	}
+
+	/** Why the server would not print the schematic at serverCheckedPlacement, null if it would */
+	@Nullable
+	private Component serverPlacementProblem;
+	/** What the server's answer is for; it doesn't count for anything else, e.g. once the schematic was moved or turned */
+	@Nullable
+	private Placement serverCheckedPlacement;
+	/** Why the deployed schematic may not be printed: the source's client check (see {@link ClientPlacementChecks}), else the server's */
+	@Nullable
+	private Component deployedProblem;
+	/** Why the schematic may not be deployed where the deploy tool would put it, from the client check */
+	@Nullable
+	private Component previewProblem;
+	/**
+	 * A tool's message, shown before anything else as it lasts only briefly, see {@link #showToolMessage}; kept across
+	 * re-inits
+	 */
+	@Nullable
+	private Component toolMessage;
+	private int toolMessageTicks;
+	/** What the action bar shows, null if nothing of this handler */
+	@Nullable
+	private Component shownMessage;
+	private int shownMessageTicks;
 	private SchematicTransformation transformation;
 	private AABB bounds;
 	private boolean deployed;
 	private boolean active;
-	private ToolType currentTool;
+	private SchematicTool currentTool;
 
 	private int syncCooldown;
 	private int activeHotbarSlot;
@@ -77,23 +155,37 @@ public class SchematicHandler {
 	public void tick() {
 		Minecraft mc = Minecraft.getInstance();
 		LocalPlayer player = mc.player;
+		tickPendingSyncs(player.getInventory());
 		ItemStack stack = mc.gameMode.getPlayerMode() == GameType.SPECTATOR ? null : findBlueprintInHand(player);
 		int slot = player.getInventory()
 			.getSelectedSlot();
 
 		// Switched to another item, slot or schematic: the previous one keeps its pending changes
 		if (active && (stack == null || slot != activeHotbarSlot || player.isCreative() != creative
-			|| !stack.get(ModDataComponents.SCHEMATIC_FILE)
+			|| !SchematicItem.getSource(stack)
+				.cacheKey(stack)
 				.equals(displayedSchematic)))
 			deactivate(true);
 		if (stack == null)
 			return;
+		if (active && stack != activeSchematicItem) {
+			// The server corrected an outdated size (see SchematicDownloads): shown again, keeping a change of ours
+			if (!showsSizeOf(stack))
+				deactivate(true);
+			// Another stack of the same schematic, e.g. a copy swapped into the slot, shows its own placement, as does a
+			// placement set elsewhere, e.g. by a command. A stack the server replaced has the shown placement, as ours was
+			// synced (see tickPendingSyncs); while a change of ours is not, it wins.
+			else if (syncCooldown == 0 && !showsPlacementOf(stack))
+				deactivate(false);
+		}
 
 		// The client stack is replaced whenever the server syncs it
 		activeSchematicItem = stack;
 		if (!active)
 			init(player, stack, slot);
 		transformation.tick();
+		if (waitingForTemplate)
+			tickDownload();
 
 		boolean keyDown = mc.gui.screen() == null && ModKeys.TOOL_MENU.isDown();
 		if (keyDown != toolMenuKeyDown)
@@ -107,24 +199,101 @@ public class SchematicHandler {
 		selectionScreen.update();
 		currentTool.getTool()
 			.updateSelection();
+		updatePlacementProblem();
+	}
+
+	/**
+	 * Checks where the schematic is deployed and where the deploy tool would put it, which may both be shown at once, and
+	 * shows the problem with the one the player is placing.
+	 */
+	private void updatePlacementProblem() {
+		BlockPos previewTarget = currentTool.getTool() instanceof DeployTool deployTool ? deployTool.getDeployTarget()
+			: null;
+		previewProblem = previewTarget == null ? null : checkOnClient(transformation.anchorFor(previewTarget));
+		// The client check covers the schematic while it moves, the server's answer the synced placement
+		Component deployedClientProblem = deployed ? checkOnClient(transformation.getAnchor()) : null;
+		deployedProblem = deployedClientProblem != null ? deployedClientProblem
+			: deployed && shownPlacement().equals(serverCheckedPlacement) ? serverPlacementProblem : null;
+
+		// Not known before the template is here
+		Component problem = waitingForTemplate ? null : previewTarget != null ? previewProblem : deployedProblem;
+		updateActionBar(problem);
+	}
+
+	/**
+	 * Shows one message in the action bar, the first of: a recent tool message, the download's progress or failure,
+	 * the placement problem.
+	 */
+	private void updateActionBar(@Nullable Component problem) {
+		if (downloadMessageTicks > 0 && --downloadMessageTicks == 0)
+			downloadMessage = null;
+		if (toolMessageTicks > 0 && --toolMessageTicks == 0)
+			toolMessage = null;
+		Component message = toolMessage != null ? toolMessage
+			: downloadMessage != null ? downloadMessage
+			: problem != null ? problem.copy()
+				.withStyle(ChatFormatting.RED) : null;
+
+		Hud hud = Minecraft.getInstance().gui.hud;
+		if (Objects.equals(message, shownMessage)) {
+			if (message != null && ++shownMessageTicks >= MESSAGE_REFRESH_TICKS) {
+				shownMessageTicks = 0;
+				hud.setOverlayMessage(message, false);
+			}
+			return;
+		}
+		if (message != null)
+			hud.setOverlayMessage(message, false);
+		else if (shownMessage != null)
+			hud.setOverlayMessage(CommonComponents.EMPTY, false);
+		shownMessage = message;
+		shownMessageTicks = 0;
+	}
+
+	@Nullable
+	private Component checkOnClient(BlockPos anchor) {
+		StructurePlaceSettings settings = transformation.toSettings();
+		return ClientPlacementChecks.check(activeSchematicItem, SchematicItem.getWorldBounds(anchor,
+			settings.getRotation(), settings.getMirror(), activeSchematicItem.get(ModDataComponents.SCHEMATIC_BOUNDS)));
 	}
 
 	private void init(LocalPlayer player, ItemStack stack, int slot) {
 		loadSettings(stack);
-		displayedSchematic = stack.get(ModDataComponents.SCHEMATIC_FILE);
+		displayedSchematic = SchematicItem.getSource(stack)
+			.cacheKey(stack);
+		// Selecting the schematic again retries a failed download; start it early, so it is there when deployed
+		ClientSchematicCache cache = SchematicCannonClient.SCHEMATIC_CACHE;
+		cache.clearFailure(displayedSchematic);
+		StructureTemplate cached = cache.get(displayedSchematic, slot);
+		// The stack's size is outdated, e.g. another copy got the file uploaded again: downloading it again makes the
+		// server correct it (see SchematicDownloads)
+		if (cached != null && !cached.getSize()
+			.equals(stack.get(ModDataComponents.SCHEMATIC_BOUNDS))) {
+			cache.invalidate(displayedSchematic);
+			cache.get(displayedSchematic, slot);
+		}
 		activeHotbarSlot = slot;
 		creative = player.isCreative();
 		active = true;
+		serverPlacementProblem = null;
+		deployedProblem = null;
+		previewProblem = null;
+		// Shows the message for this schematic, even if it reads the same
+		shownMessage = null;
+		// A download message was about the schematic shown before
+		downloadMessage = null;
+		downloadMessageTicks = 0;
+		// Asks the server to check the placement, right away: it was just read from this stack, and a later sync could
+		// land on another copy of the schematic swapped into the slot meanwhile
+		if (deployed)
+			sync();
 		clearRenderers();
 		if (deployed) {
 			setupRenderer();
-			ToolType toolBefore = currentTool;
-			List<ToolType> tools = ToolType.getTools(creative);
-			selectionScreen = new ToolSelectionScreen(tools, this::equip);
-			if (tools.contains(toolBefore)) {
-				selectionScreen.setSelectedElement(toolBefore);
-				equip(toolBefore);
-			}
+			// Keeps the tool, e.g. when the schematic changed while it was being used
+			List<SchematicTool> tools = ToolType.getTools(stack, creative);
+			selectionScreen = new ToolSelectionScreen(tools, tools.contains(currentTool) ? currentTool : ToolType.MOVE,
+				this::equip);
 		} else
 			selectionScreen = new ToolSelectionScreen(List.of(ToolType.DEPLOY), this::equip);
 	}
@@ -132,7 +301,11 @@ public class SchematicHandler {
 	private void setupRenderer() {
 		clearRenderers();
 		Level clientWorld = Minecraft.getInstance().level;
-		StructureTemplate schematic = SchematicItem.loadSchematic(clientWorld, activeSchematicItem);
+		StructureTemplate schematic = SchematicCannonClient.SCHEMATIC_CACHE.get(displayedSchematic, activeHotbarSlot);
+		// Until it is downloaded the outline shows the size, and the tools already work on it
+		waitingForTemplate = schematic == null;
+		if (schematic == null)
+			return;
 		Vec3i size = schematic.getSize();
 		if (size.equals(Vec3i.ZERO))
 			return;
@@ -165,6 +338,35 @@ public class SchematicHandler {
 	}
 
 	/**
+	 * Builds the preview once the template arrived, and shows the download in the action bar while it takes long.
+	 */
+	private void tickDownload() {
+		ClientSchematicCache cache = SchematicCannonClient.SCHEMATIC_CACHE;
+		switch (cache.getStatus(displayedSchematic)) {
+			case READY -> {
+				setupRenderer();
+				downloadMessage = null;
+			}
+			case FAILED -> {
+				waitingForTemplate = false;
+				downloadMessage = Lang.translate("schematic.downloadFailed")
+					.withStyle(ChatFormatting.RED);
+				downloadMessageTicks = EVENT_MESSAGE_TICKS;
+			}
+			case DOWNLOADING -> {
+				// Asks again, in case the download was dropped, e.g. by a cache reset
+				cache.get(displayedSchematic, activeHotbarSlot);
+				if (cache.getDownloadTicks(displayedSchematic) > DOWNLOAD_INDICATOR_DELAY) {
+					downloadMessage = Lang.translate("schematic.downloading",
+						(int) (cache.getProgress(displayedSchematic) * 100));
+					// Lasts while the download is running
+					downloadMessageTicks = 2;
+				}
+			}
+		}
+	}
+
+	/**
 	 * Maps the preview's schematic coordinates to the world, like the transformation applied when rendering.
 	 */
 	private Matrix4fc getLocalToWorld() {
@@ -191,6 +393,7 @@ public class SchematicHandler {
 				sync(slot);
 		}
 		active = false;
+		waitingForTemplate = false;
 		toolMenuKeyDown = false;
 		syncCooldown = 0;
 		activeSchematicItem = null;
@@ -203,6 +406,7 @@ public class SchematicHandler {
 	 */
 	public void reset() {
 		deactivate(false);
+		pendingSyncs.clear();
 	}
 
 	/**
@@ -328,11 +532,7 @@ public class SchematicHandler {
 	@Nullable
 	private ItemStack findBlueprintInHand(Player player) {
 		ItemStack stack = player.getMainHandItem();
-		if (!stack.is(ModItems.SCHEMATIC))
-			return null;
-		if (!stack.has(ModDataComponents.SCHEMATIC_FILE) || !stack.has(ModDataComponents.SCHEMATIC_BOUNDS))
-			return null;
-		return stack;
+		return SchematicItem.isValid(stack) ? stack : null;
 	}
 
 	public void markDirty() {
@@ -347,38 +547,84 @@ public class SchematicHandler {
 	private void sync(int slot) {
 		StructurePlaceSettings settings = transformation.toSettings();
 		BlockPos anchor = transformation.getAnchor();
-		ClientPlayNetworking.send(new SchematicSyncPacket(slot, settings, anchor, deployed));
-		// Same as the server does, so a re-init before its update arrives shows this placement
+		int syncId = ThreadLocalRandom.current()
+			.nextInt();
+		ClientPlayNetworking.send(new SchematicSyncPacket(slot, settings, anchor, deployed, syncId));
 		ItemStack stack = Minecraft.getInstance().player.getInventory()
 			.getItem(slot);
-		if (stack.is(ModItems.SCHEMATIC)) {
-			stack.set(ModDataComponents.SCHEMATIC_DEPLOYED, deployed);
-			stack.set(ModDataComponents.SCHEMATIC_ANCHOR, anchor);
-			stack.set(ModDataComponents.SCHEMATIC_ROTATION, settings.getRotation());
-			stack.set(ModDataComponents.SCHEMATIC_MIRROR, settings.getMirror());
-		}
+		if (!SchematicItem.isValid(stack))
+			return;
+
+		String schematic = SchematicItem.getSource(stack)
+			.cacheKey(stack);
+		PendingSync pending = pendingSyncs.computeIfAbsent(slot, s -> new PendingSync());
+		// Earlier ids were for another schematic swapped into the slot, whose stack must not get this placement
+		if (!schematic.equals(pending.schematic))
+			pending.ids.clear();
+		pending.schematic = schematic;
+		pending.ids.add(syncId);
+		pending.deployed = deployed;
+		pending.placement = new Placement(anchor, settings.getRotation(), settings.getMirror());
+		pending.ticksLeft = SYNC_ANSWER_TIMEOUT;
+		// Same as the server does, so a re-init before its answer arrives shows this placement; without the id, which
+		// tells the answer apart
+		pending.applyTo(stack);
 	}
 
 	/**
-	 * The inventory slot of the schematic this handler showed, or -1 if it is gone.
+	 * Keeps the placements of our syncs on their stacks until the server answers the latest. It answers in order, each
+	 * with the id of the sync (see {@link ModDataComponents#SCHEMATIC_SYNC_ID}); a stack with an earlier id is the answer
+	 * to an earlier sync, which would show where the schematic was a moment ago, so it gets the latest placement again.
+	 * Stacks with other ids are not ours: another copy swapped into the slot, or a placement set elsewhere after the
+	 * answer, e.g. by a command.
+	 */
+	private void tickPendingSyncs(Inventory inventory) {
+		pendingSyncs.int2ObjectEntrySet()
+			.removeIf(entry -> {
+				PendingSync pending = entry.getValue();
+				ItemStack stack = inventory.getItem(entry.getIntKey());
+				Integer syncId = stack.get(ModDataComponents.SCHEMATIC_SYNC_ID);
+				if (syncId != null && syncId == pending.ids.getInt(pending.ids.size() - 1))
+					return true;
+				if (syncId != null && pending.ids.contains(syncId.intValue()))
+					pending.applyTo(stack);
+				return --pending.ticksLeft <= 0;
+			});
+	}
+
+	/**
+	 * The inventory slot of the schematic this handler showed, or -1 if it is gone. A stack the server replaced is only
+	 * recognised in its hotbar slot: elsewhere a schematic with the same cache key may be a copy (see the cloning
+	 * recipe), whose own placement must not be overwritten.
 	 */
 	private int findActiveItemSlot() {
 		Inventory inventory = Minecraft.getInstance().player.getInventory();
 		for (int i = 0; i < inventory.getContainerSize(); i++)
 			if (inventory.getItem(i) == activeSchematicItem)
 				return i;
-		if (displayedSchematic.equals(inventory.getItem(activeHotbarSlot)
-			.get(ModDataComponents.SCHEMATIC_FILE)))
-			return activeHotbarSlot;
-		for (int i = 0; i < inventory.getContainerSize(); i++) {
-			ItemStack stack = inventory.getItem(i);
-			if (stack.is(ModItems.SCHEMATIC) && displayedSchematic.equals(stack.get(ModDataComponents.SCHEMATIC_FILE)))
-				return i;
-		}
-		return -1;
+		return showsSchematic(inventory.getItem(activeHotbarSlot)) ? activeHotbarSlot : -1;
 	}
 
-	public void equip(ToolType tool) {
+	/**
+	 * Whether the schematic with the cache key is the one shown.
+	 */
+	public boolean showsSchematic(String key) {
+		return showsSchematic(key::equals);
+	}
+
+	/**
+	 * Whether the shown schematic's cache key matches.
+	 */
+	public boolean showsSchematic(Predicate<String> keys) {
+		return active && displayedSchematic != null && keys.test(displayedSchematic);
+	}
+
+	private boolean showsSchematic(ItemStack stack) {
+		return SchematicItem.isValid(stack) && displayedSchematic.equals(SchematicItem.getSource(stack)
+			.cacheKey(stack));
+	}
+
+	public void equip(SchematicTool tool) {
 		this.currentTool = tool;
 		currentTool.getTool()
 			.init();
@@ -394,7 +640,7 @@ public class SchematicHandler {
 		bounds = new AABB(0, 0, 0, size.getX(), size.getY(), size.getZ());
 		outline = new AABBOutline(bounds);
 		outline.getParams()
-			.colored(0x6886c5)
+			.colored(getOutlineColor())
 			.lineWidth(1 / 16f);
 		transformation.init(anchor, settings, bounds);
 	}
@@ -403,15 +649,19 @@ public class SchematicHandler {
 		if (!active)
 			return;
 		if (!deployed) {
-			List<ToolType> tools = ToolType.getTools(creative);
-			selectionScreen = new ToolSelectionScreen(tools, this::equip);
+			List<SchematicTool> tools = ToolType.getTools(activeSchematicItem, creative);
+			selectionScreen = new ToolSelectionScreen(tools, ToolType.MOVE, this::equip);
 		}
 		deployed = true;
+		// The server checks the new placement once it is synced
+		serverPlacementProblem = null;
 		setupRenderer();
 	}
 
 	public String getCurrentSchematicName() {
-		return displayedSchematic != null ? displayedSchematic : "-";
+		return activeSchematicItem != null ? SchematicItem.getSource(activeSchematicItem)
+			.displayName(activeSchematicItem)
+			.getString() : "-";
 	}
 
 	public void printInstantly() {
@@ -448,6 +698,69 @@ public class SchematicHandler {
 
 	public ItemStack getActiveSchematicItem() {
 		return activeSchematicItem;
+	}
+
+	/** Whether the preview has the stack's size */
+	private boolean showsSizeOf(ItemStack stack) {
+		Vec3i size = stack.get(ModDataComponents.SCHEMATIC_BOUNDS);
+		return size != null && size.getX() == bounds.getXsize() && size.getY() == bounds.getYsize()
+			&& size.getZ() == bounds.getZsize();
+	}
+
+	/** Whether the stack is placed where the preview shows it */
+	private boolean showsPlacementOf(ItemStack stack) {
+		return Objects.equals(placementOf(stack), deployed ? shownPlacement() : null);
+	}
+
+	/** The stack's placement, null if it isn't deployed */
+	@Nullable
+	private static Placement placementOf(ItemStack stack) {
+		if (!stack.getOrDefault(ModDataComponents.SCHEMATIC_DEPLOYED, false))
+			return null;
+		return new Placement(stack.getOrDefault(ModDataComponents.SCHEMATIC_ANCHOR, BlockPos.ZERO),
+			stack.getOrDefault(ModDataComponents.SCHEMATIC_ROTATION, Rotation.NONE),
+			stack.getOrDefault(ModDataComponents.SCHEMATIC_MIRROR, Mirror.NONE));
+	}
+
+	/**
+	 * The server's check of the synced placement, shown with a red outline and the reason in the action bar. Only an
+	 * answer for the placement shown now counts: not for an earlier one, or another copy of the schematic.
+	 */
+	public void onPlacementChecked(String key, BlockPos anchor, Rotation rotation, Mirror mirror,
+		@Nullable Component problem) {
+		Placement checked = new Placement(anchor, rotation, mirror);
+		if (active && deployed && key.equals(displayedSchematic) && checked.equals(shownPlacement())) {
+			serverPlacementProblem = problem;
+			serverCheckedPlacement = checked;
+		}
+	}
+
+	private Placement shownPlacement() {
+		StructurePlaceSettings settings = transformation.toSettings();
+		return new Placement(transformation.getAnchor(), settings.getRotation(), settings.getMirror());
+	}
+
+	/**
+	 * Shows a tool's message in the action bar for a while, e.g. a value the player just changed with it. It comes
+	 * before the download and placement problems, see {@link #updateActionBar}.
+	 */
+	public void showToolMessage(Component message) {
+		toolMessage = message;
+		toolMessageTicks = EVENT_MESSAGE_TICKS;
+	}
+
+	/**
+	 * Color of the deployed schematic's outline.
+	 */
+	public int getOutlineColor() {
+		return deployedProblem != null ? INVALID_OUTLINE_COLOR : OUTLINE_COLOR;
+	}
+
+	/**
+	 * Color of the outline the deploy tool shows at the cursor.
+	 */
+	public int getPreviewOutlineColor() {
+		return previewProblem != null ? INVALID_OUTLINE_COLOR : OUTLINE_COLOR;
 	}
 
 	public AABBOutline getOutline() {

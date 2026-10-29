@@ -11,6 +11,7 @@ import net.harou.schematiccannon.schematic.level.SchematicLevel;
 import net.harou.schematiccannon.util.BlockHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.Entity;
@@ -27,6 +28,7 @@ import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FaceAttachedHorizontalDirectionalBlock;
 import net.minecraft.world.level.block.GrindstoneBlock;
 import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.RedstoneWireBlock;
 import net.minecraft.world.level.block.SignBlock;
 import net.minecraft.world.level.block.WoolCarpetBlock;
@@ -45,23 +47,29 @@ import net.minecraft.world.level.storage.ValueOutput;
 public class SchematicPrinter {
 
 	public enum PrintStage {
-		BLOCKS, DEFERRED_BLOCKS, ENTITIES
+		BLOCKS, DEFERRED_BLOCKS,
+		/** Fluid sources and the water of waterlogged blocks, once all blocks are there to hold them */
+		FLUIDS, ENTITIES
 	}
 
 	private boolean schematicLoaded;
 	private boolean isErrored;
 	private SchematicLevel blockReader;
 	private BlockPos schematicAnchor;
+	/** Of the loaded schematic, see {@link #getSchematicSize} */
+	private Vec3i schematicSize = Vec3i.ZERO;
 
 	private BlockPos currentPos;
 	private int printingEntityIndex;
 	private PrintStage printStage;
 	private List<BlockPos> deferredBlocks;
+	private List<BlockPos> fluidBlocks;
 
 	public SchematicPrinter() {
 		printingEntityIndex = -1;
 		printStage = PrintStage.BLOCKS;
 		deferredBlocks = new LinkedList<>();
+		fluidBlocks = new LinkedList<>();
 	}
 
 	/**
@@ -88,6 +96,7 @@ public class SchematicPrinter {
 			return;
 
 		StructureTemplate activeTemplate = SchematicItem.loadSchematic(originalWorld, blueprint);
+		schematicSize = activeTemplate.getSize();
 		StructurePlaceSettings settings = SchematicItem.getSettings(blueprint, processNBT);
 
 		schematicAnchor = blueprint.get(ModDataComponents.SCHEMATIC_ANCHOR);
@@ -111,6 +120,7 @@ public class SchematicPrinter {
 		printingEntityIndex = -1;
 		printStage = PrintStage.BLOCKS;
 		deferredBlocks.clear();
+		fluidBlocks.clear();
 		BoundingBox bounds = blockReader.getBounds();
 		currentPos = new BlockPos(bounds.minX() - 1, bounds.minY(), bounds.minZ());
 		schematicLoaded = true;
@@ -125,10 +135,28 @@ public class SchematicPrinter {
 		printingEntityIndex = -1;
 		printStage = PrintStage.BLOCKS;
 		deferredBlocks.clear();
+		fluidBlocks.clear();
 	}
 
 	public boolean isLoaded() {
 		return schematicLoaded;
+	}
+
+	/**
+	 * The size of the loaded schematic. The size stored on the stack may be outdated, e.g. after its file was uploaded
+	 * again.
+	 */
+	public Vec3i getSchematicSize() {
+		return schematicSize;
+	}
+
+	/** The schematic's block at the current target */
+	public BlockState getCurrentBlockState() {
+		return blockReader.getBlockState(getCurrentTarget());
+	}
+
+	public boolean isPrintingFluids() {
+		return printStage == PrintStage.FLUIDS;
 	}
 
 	public boolean isErrored() {
@@ -156,13 +184,20 @@ public class SchematicPrinter {
 		void handle(BlockPos target, Entity entity);
 	}
 
-	public void handleCurrentTarget(BlockTargetHandler blockHandler, EntityTargetHandler entityHandler) {
+	/**
+	 * @param fluidHandler for the fluid stage, with the schematic's block: a fluid source or a waterlogged block, see
+	 *                     {@link BlockHelper#placeSchematicFluid}
+	 */
+	public void handleCurrentTarget(BlockTargetHandler blockHandler, BlockTargetHandler fluidHandler,
+		EntityTargetHandler entityHandler) {
 		BlockPos target = getCurrentTarget();
 
 		if (printStage == PrintStage.ENTITIES) {
 			Entity entity = blockReader.getEntityList()
 				.get(printingEntityIndex);
 			entityHandler.handle(target, entity);
+		} else if (printStage == PrintStage.FLUIDS) {
+			fluidHandler.handle(target, blockReader.getBlockState(target), null);
 		} else {
 			BlockState blockState = BlockHelper.setZeroAge(blockReader.getBlockState(target));
 			BlockEntity blockEntity = blockReader.getBlockEntity(target);
@@ -176,18 +211,35 @@ public class SchematicPrinter {
 			BlockState toReplaceOther, boolean isNormalCube);
 	}
 
+	/**
+	 * For the creative instant print: everything is placed, fluids replacing whatever is in their way like blocks.
+	 */
 	public boolean shouldPlaceCurrent(Level world) {
-		return shouldPlaceCurrent(world, (a, b, c, d, e, f) -> true);
+		return shouldPlaceCurrent(world, (a, b, c, d, e, f) -> true, true);
 	}
 
 	public boolean shouldPlaceCurrent(Level world, PlacementPredicate predicate) {
+		return shouldPlaceCurrent(world, predicate, false);
+	}
+
+	private boolean shouldPlaceCurrent(Level world, PlacementPredicate predicate, boolean fluidsReplaceBlocks) {
 		if (world == null)
 			return false;
 
 		if (printStage == PrintStage.ENTITIES)
 			return true;
+		if (printStage == PrintStage.FLUIDS)
+			return shouldPlaceFluid(world, getCurrentTarget(), fluidsReplaceBlocks);
 
 		return shouldPlaceBlock(world, predicate, getCurrentTarget());
+	}
+
+	/**
+	 * Whether the fluid of the schematic block is still missing where it fits, see {@link BlockHelper#fluidFits}.
+	 */
+	public boolean shouldPlaceFluid(Level world, BlockPos pos, boolean replaceBlocks) {
+		return world.isLoaded(pos) && world.getWorldBorder()
+			.isWithinBounds(pos) && BlockHelper.fluidFits(world, pos, blockReader.getBlockState(pos), replaceBlocks);
 	}
 
 	public boolean shouldPlaceBlock(Level world, PlacementPredicate predicate, BlockPos pos) {
@@ -229,6 +281,8 @@ public class SchematicPrinter {
 				.get(printingEntityIndex));
 
 		BlockPos target = getCurrentTarget();
+		if (printStage == PrintStage.FLUIDS)
+			return ItemRequirement.ofFluid(blockReader.getBlockState(target));
 		BlockState blockState = BlockHelper.setZeroAge(blockReader.getBlockState(target));
 		BlockEntity blockEntity = null;
 		if (blockState.hasBlockEntity()) {
@@ -250,9 +304,19 @@ public class SchematicPrinter {
 				checklist.warnBlockNotLoaded();
 				continue;
 			}
+			BlockState required = BlockHelper.setZeroAge(blockReader.getBlockState(pos));
+			// The bucket for the fluid, in addition to a waterlogged block itself. The cannon's rules see the fluid going
+			// into an empty spot, as it never replaces anything, which leaves the ones that also stop fluids (e.g. next to
+			// the cannon).
+			ItemRequirement bucket = ItemRequirement.ofFluid(required);
+			if ((BlockHelper.isFluidSource(required) || BlockHelper.isWaterlogged(required)) && !bucket.isInvalid()
+				&& needsFluid(world, predicate, pos, required) && predicate.shouldPlace(pos, required.getFluidState()
+					.createLegacyBlock(), null, Blocks.AIR.defaultBlockState(), null, false)) {
+				checklist.require(bucket);
+				blocksToPlace++;
+			}
 			if (!shouldPlaceBlock(world, predicate, pos))
 				continue;
-			BlockState required = BlockHelper.setZeroAge(blockReader.getBlockState(pos));
 			BlockEntity requiredBE = blockReader.getBlockEntity(pos);
 			ItemRequirement requirement = ItemRequirement.of(required, requiredBE);
 			if (requirement.isEmpty())
@@ -263,6 +327,19 @@ public class SchematicPrinter {
 			blocksToPlace++;
 		}
 		return blocksToPlace;
+	}
+
+	/**
+	 * Whether the cannon will place the fluid. Like {@link #shouldPlaceFluid}, but for a waterlogged block that isn't there
+	 * yet, also whether the cannon will place the block first (not when another block stays in its way).
+	 */
+	private boolean needsFluid(Level world, PlacementPredicate predicate, BlockPos pos, BlockState state) {
+		if (!BlockHelper.isWaterlogged(state))
+			return shouldPlaceFluid(world, pos, false);
+		BlockState current = world.getBlockState(pos);
+		if (BlockHelper.getPlacedState(current) == BlockHelper.getPlacedState(state))
+			return !BlockHelper.isWaterlogged(current);
+		return BlockHelper.isPlacedByOtherHalf(state) || shouldPlaceBlock(world, predicate, pos);
 	}
 
 	public void markAllEntityRequirements(MaterialChecklist checklist) {
@@ -280,15 +357,23 @@ public class SchematicPrinter {
 		do {
 			if (printStage == PrintStage.BLOCKS) {
 				while (tryAdvanceCurrentPos()) {
-					deferredBlocks.add(currentPos);
+					// Left for a later stage
 				}
 			}
 
 			if (printStage == PrintStage.DEFERRED_BLOCKS) {
 				if (deferredBlocks.isEmpty()) {
-					printStage = PrintStage.ENTITIES;
+					printStage = PrintStage.FLUIDS;
 				} else {
 					currentPos = deferredBlocks.remove(0);
+				}
+			}
+
+			if (printStage == PrintStage.FLUIDS) {
+				if (fluidBlocks.isEmpty()) {
+					printStage = PrintStage.ENTITIES;
+				} else {
+					currentPos = fluidBlocks.remove(0);
 				}
 			}
 
@@ -310,6 +395,11 @@ public class SchematicPrinter {
 		return true;
 	}
 
+	/**
+	 * Moves to the next position of the block stage.
+	 *
+	 * @return whether the block there is left for a later stage: deferred blocks, fluids
+	 */
 	public boolean tryAdvanceCurrentPos() {
 		currentPos = currentPos.relative(Direction.EAST);
 		BoundingBox bounds = blockReader.getBounds();
@@ -326,15 +416,30 @@ public class SchematicPrinter {
 			return false;
 		}
 
-		return shouldDeferBlock(blockReader.getBlockState(getCurrentTarget()));
+		BlockState state = blockReader.getBlockState(getCurrentTarget());
+		// Fluids go in once all blocks are there to hold them; a waterlogged block is printed dry first
+		if (BlockHelper.isFluidSource(state) || BlockHelper.isWaterlogged(state))
+			fluidBlocks.add(currentPos);
+		if (BlockHelper.isFluidSource(state))
+			return true;
+		if (shouldDeferBlock(state)) {
+			deferredBlocks.add(currentPos);
+			return true;
+		}
+		return false;
 	}
 
 	/**
-	 * Blocks that need a supporting block are placed after all other blocks.
+	 * Blocks that need a supporting block are placed after all other blocks. So are blocks that hold water without being
+	 * waterlogged (kelp, seagrass): their water could flow out of the unfinished build otherwise.
 	 */
 	public static boolean shouldDeferBlock(BlockState state) {
 		Block block = state.getBlock();
 		if (state.hasProperty(BlockStateProperties.HANGING))
+			return true;
+		if (!state.getFluidState()
+			.isEmpty() && !state.hasProperty(BlockStateProperties.WATERLOGGED) && !(block instanceof LiquidBlock)
+			&& !BlockHelper.isFluidSource(state))
 			return true;
 		if (block instanceof LadderBlock || block instanceof BaseTorchBlock || block instanceof SignBlock
 			|| block instanceof BasePressurePlateBlock || block instanceof BaseRailBlock || block instanceof DiodeBlock

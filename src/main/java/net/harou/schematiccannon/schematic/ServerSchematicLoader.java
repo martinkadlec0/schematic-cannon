@@ -2,15 +2,16 @@ package net.harou.schematiccannon.schematic;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import org.jetbrains.annotations.Nullable;
 import java.util.stream.Stream;
@@ -21,17 +22,21 @@ import net.harou.schematiccannon.SchematicCannon;
 import net.harou.schematiccannon.registry.ModBlocks;
 import net.harou.schematiccannon.registry.ModItems;
 import net.harou.schematiccannon.schematic.SchematicExport.SchematicExportResult;
+import net.harou.schematiccannon.schematic.source.FileSchematicSource;
 import net.harou.schematiccannon.table.SchematicTableBlockEntity;
+import net.harou.schematiccannon.util.BlockHelper;
 import net.harou.schematiccannon.util.Lang;
 import net.harou.schematiccannon.util.SchematicFiles;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 public class ServerSchematicLoader {
 
@@ -41,6 +46,8 @@ public class ServerSchematicLoader {
 		public Level world;
 		public BlockPos tablePos;
 		public OutputStream stream;
+		/** The file being written; it replaces the uploaded file once complete, see {@link #partFile} */
+		public Path partFile;
 		public long bytesUploaded;
 		public long totalBytes;
 		public int idleTime;
@@ -86,8 +93,7 @@ public class ServerSchematicLoader {
 	}
 
 	public void handleNewUpload(ServerPlayer player, String schematic, long size, BlockPos pos) {
-		String playerSchematicId = player.getGameProfile()
-			.name() + "/" + schematic;
+		String playerSchematicId = ownerId(player) + "/" + schematic;
 		Path uploadPath = resolveUploadPath(player, schematic);
 		if (uploadPath == null)
 			return;
@@ -110,16 +116,18 @@ public class ServerSchematicLoader {
 			return;
 
 		try {
-			// Delete schematic with same name
-			Files.deleteIfExists(uploadPath);
-
-			// Too many Schematics
-			if (!tryDeleteOldestSchematic(uploadPath.getParent()))
+			// Too many Schematics; uploading one with the same name again replaces it
+			if (!Files.exists(uploadPath) && !tryDeleteOldestSchematic(player.level()
+				.getServer(), uploadPath.getParent()))
 				return;
 
-			// Open Stream
-			OutputStream writer = Files.newOutputStream(uploadPath);
-			activeUploads.put(playerSchematicId, new SchematicUploadEntry(writer, size, player.level(), pos));
+			// Written next to it and moved in once complete: until then a schematic with this name (e.g. a copy put
+			// into a cannon) still loads the previous file
+			Path partFile = partFile(uploadPath);
+			OutputStream writer = Files.newOutputStream(partFile);
+			SchematicUploadEntry entry = new SchematicUploadEntry(writer, size, player.level(), pos);
+			entry.partFile = partFile;
+			activeUploads.put(playerSchematicId, entry);
 
 			// Notify Block Entity
 			table.startUpload(schematic);
@@ -141,8 +149,7 @@ public class ServerSchematicLoader {
 	}
 
 	public void handleWriteRequest(ServerPlayer player, String schematic, byte[] data) {
-		String playerSchematicId = player.getGameProfile()
-			.name() + "/" + schematic;
+		String playerSchematicId = ownerId(player) + "/" + schematic;
 
 		if (activeUploads.containsKey(playerSchematicId)) {
 			SchematicUploadEntry entry = activeUploads.get(playerSchematicId);
@@ -185,7 +192,8 @@ public class ServerSchematicLoader {
 		SchematicUploadEntry entry = activeUploads.remove(playerSchematicId);
 		try {
 			entry.stream.close();
-			Files.deleteIfExists(SchematicFiles.UPLOADED_SCHEMATICS_DIR.resolve(playerSchematicId));
+			// The uploaded file itself was never touched
+			Files.deleteIfExists(entry.partFile);
 			SchematicCannon.LOGGER.warn("Cancelled Schematic Upload: {}", playerSchematicId);
 		} catch (IOException e) {
 			SchematicCannon.LOGGER.error("Exception Thrown when cancelling Upload: {}", playerSchematicId, e);
@@ -208,8 +216,7 @@ public class ServerSchematicLoader {
 	}
 
 	public void handleFinishedUpload(ServerPlayer player, String schematic) {
-		String playerSchematicId = player.getGameProfile()
-			.name() + "/" + schematic;
+		String playerSchematicId = ownerId(player) + "/" + schematic;
 
 		if (activeUploads.containsKey(playerSchematicId)) {
 			try {
@@ -217,8 +224,12 @@ public class ServerSchematicLoader {
 				SchematicUploadEntry removed = activeUploads.remove(playerSchematicId);
 				Level world = removed.world;
 				BlockPos pos = removed.tablePos;
+				moveIn(removed.partFile, SchematicFiles.UPLOADED_SCHEMATICS_DIR.resolve(playerSchematicId));
 
 				SchematicCannon.LOGGER.info("New Schematic Uploaded: " + playerSchematicId);
+				// Schematics of an earlier upload with this name now load the new file
+				SchematicDownloads.invalidate(player.level()
+					.getServer(), FileSchematicSource.cacheKey(ownerId(player), schematic));
 				if (pos == null)
 					return;
 
@@ -232,8 +243,7 @@ public class ServerSchematicLoader {
 				table.finishUpload();
 				if (table.inventory.getItem(1)
 					.isEmpty())
-					table.inventory.setItem(1, SchematicItem.create(world, schematic, player.getGameProfile()
-						.name()));
+					table.inventory.setItem(1, SchematicItem.create(world, schematic, ownerId(player)));
 
 			} catch (IOException e) {
 				SchematicCannon.LOGGER.error("Exception Thrown when finishing Upload: {}", playerSchematicId, e);
@@ -257,22 +267,35 @@ public class ServerSchematicLoader {
 		// The area comes from the client: only save loaded chunks, never load or generate any
 		BlockPos end = pos.offset(bounds)
 			.offset(-1, -1, -1);
-		if (bounds.getX() <= 0 || bounds.getY() <= 0 || bounds.getZ() <= 0 || !world.hasChunksAt(pos, end)) {
+		// Loaded, and at least partly inside the world's height
+		if (bounds.getX() <= 0 || bounds.getY() <= 0 || bounds.getZ() <= 0 || pos.getY() > world.getMaxY()
+			|| end.getY() < world.getMinY() || !BlockHelper.isLoaded(world, BoundingBox.fromCorners(pos, end))) {
 			SchematicCannon.LOGGER.warn("Rejected instant schematic with invalid bounds: {}/{}", playerName, schematic);
 			return;
 		}
 
 		// if there's too many schematics, delete oldest
-		if (!Files.exists(uploadPath) && !tryDeleteOldestSchematic(uploadPath.getParent()))
+		if (!Files.exists(uploadPath) && !tryDeleteOldestSchematic(player.level()
+			.getServer(), uploadPath.getParent()))
 			return;
 
 		SchematicExportResult result = SchematicExport.saveSchematic(uploadPath.getParent(), schematic, true, world,
 			pos, end);
-		if (result != null)
+		if (result != null) {
+			SchematicDownloads.invalidate(player.level()
+				.getServer(), FileSchematicSource.cacheKey(ownerId(player), schematic));
 			player.setItemInHand(InteractionHand.MAIN_HAND,
-				SchematicItem.create(world, schematic, playerName));
-		else
+				SchematicItem.create(world, schematic, ownerId(player)));
+		} else
 			Lang.sendStatus(player, Lang.translate("schematicAndPen.instant_failed").withStyle(ChatFormatting.RED));
+	}
+
+	/**
+	 * Uploads are stored per player by UUID, which stays the same when the player changes their name.
+	 */
+	private static String ownerId(ServerPlayer player) {
+		return player.getUUID()
+			.toString();
 	}
 
 	/**
@@ -286,7 +309,7 @@ public class ServerSchematicLoader {
 		Path playerPath;
 		Path uploadPath;
 		try {
-			playerPath = baseDir.resolve(playerName)
+			playerPath = baseDir.resolve(ownerId(player))
 				.normalize();
 			uploadPath = playerPath.resolve(schematic)
 				.normalize();
@@ -308,14 +331,44 @@ public class ServerSchematicLoader {
 		return uploadPath;
 	}
 
-	private boolean tryDeleteOldestSchematic(Path dir) {
+	/**
+	 * Tells clients that an uploaded file changed or is gone, so they drop what they downloaded of it.
+	 */
+	private static void invalidate(MinecraftServer server, Path file) {
+		SchematicDownloads.invalidate(server, FileSchematicSource.cacheKey(file.getParent()
+			.getFileName()
+			.toString(), file.getFileName()
+				.toString()));
+	}
+
+	/** Where an upload is written until it is complete */
+	private static Path partFile(Path uploadPath) {
+		return uploadPath.resolveSibling(uploadPath.getFileName() + ".part");
+	}
+
+	/** Replaces the uploaded file with the complete upload, at once where the file system allows it */
+	private static void moveIn(Path partFile, Path uploadPath) throws IOException {
+		try {
+			Files.move(partFile, uploadPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (AtomicMoveNotSupportedException e) {
+			Files.move(partFile, uploadPath, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private boolean tryDeleteOldestSchematic(MinecraftServer server, Path dir) {
 		try (Stream<Path> stream = Files.list(dir)) {
-			List<Path> files = stream.filter(file -> !Files.isDirectory(file))
+			// Uploads in progress (.part) don't count
+			List<Path> files = stream.filter(file -> !Files.isDirectory(file) && file.getFileName()
+				.toString()
+				.endsWith(".nbt"))
 				.toList();
 			if (files.size() < ModConfig.get().maxSchematics)
 				return true;
-			Optional<Path> oldest = files.stream().min(Comparator.comparingLong(this::getLastModifiedTime));
-			Files.delete(oldest.orElseThrow());
+			Path oldest = files.stream()
+				.min(Comparator.comparingLong(this::getLastModifiedTime))
+				.orElseThrow();
+			Files.delete(oldest);
+			invalidate(server, oldest);
 			return true;
 		} catch (IOException | IllegalStateException e) {
 			SchematicCannon.LOGGER.error("Error deleting oldest schematic", e);

@@ -92,6 +92,10 @@ public abstract class Outline {
 		@Nullable
 		Direction highlightedFace;
 		protected boolean disableLineNormals;
+		/** Opacity of plain colored faces, 0 for none */
+		protected float fillAlpha;
+		/** Only the sides: no horizontal edges and no top or bottom faces, e.g. for columns spanning the world */
+		protected boolean sidesOnly;
 		protected float alpha = 1;
 		protected int rgb = 0xFFFFFF;
 		private float lineWidth = 1 / 32f;
@@ -110,6 +114,24 @@ public abstract class Outline {
 
 		public OutlineParams withFaceTexture(@Nullable Identifier texture) {
 			this.faceTexture = texture;
+			return this;
+		}
+
+		/**
+		 * Fills the faces with the outline color at the given opacity. Unlike textured faces, the fill does not write
+		 * depth, so translucent blocks such as water behind or inside it still render.
+		 */
+		public OutlineParams filled(float alpha) {
+			this.fillAlpha = alpha;
+			return this;
+		}
+
+		/**
+		 * Draws only the vertical edges and the side faces, so tall boxes such as whole chunk columns fade out at the
+		 * bottom and top of the world instead of ending in a frame.
+		 */
+		public OutlineParams sidesOnly(boolean sidesOnly) {
+			this.sidesOnly = sidesOnly;
 			return this;
 		}
 

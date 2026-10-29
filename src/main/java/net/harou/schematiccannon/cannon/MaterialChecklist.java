@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-import it.unimi.dsi.fastutil.objects.Object2IntArrayMap;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.harou.schematiccannon.schematic.ItemRequirement;
 import net.harou.schematiccannon.util.Lang;
 import net.minecraft.ChatFormatting;
@@ -15,7 +13,6 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.network.Filterable;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.Items;
@@ -25,9 +22,40 @@ public class MaterialChecklist {
 
 	public static final int MAX_ENTRIES_PER_PAGE = 5;
 
-	public Object2IntMap<Item> gathered = new Object2IntArrayMap<>();
-	public Object2IntMap<Item> required = new Object2IntArrayMap<>();
+	/** Required items, in the order they were first required */
+	public final List<Entry> entries = new ArrayList<>();
 	public boolean blocksNotLoaded;
+
+	/**
+	 * One line of the checklist. Plain requirements are counted per item, others (e.g. items with specific components)
+	 * per stack of their requirement.
+	 */
+	public static class Entry {
+		public final ItemRequirement.StackRequirement requirement;
+		public int required;
+		public int gathered;
+
+		Entry(ItemRequirement.StackRequirement requirement) {
+			this.requirement = requirement;
+		}
+
+		boolean isFor(ItemRequirement.StackRequirement other) {
+			if (requirement.getClass() != other.getClass())
+				return false;
+			return other.getClass() == ItemRequirement.StackRequirement.class
+				? ItemStack.isSameItem(requirement.stack, other.stack)
+				: ItemStack.isSameItemSameComponents(requirement.stack, other.stack);
+		}
+
+		public ItemStack displayStack() {
+			return requirement.stack;
+		}
+	}
+
+	public void clear() {
+		entries.clear();
+		blocksNotLoaded = false;
+	}
 
 	public void warnBlockNotLoaded() {
 		blocksNotLoaded = true;
@@ -39,21 +67,27 @@ public class MaterialChecklist {
 		if (requirement.isInvalid())
 			return;
 
-		for (ItemRequirement.StackRequirement stack : requirement.getRequiredItems())
-			putOrIncrement(required, stack.stack);
-	}
-
-	private void putOrIncrement(Object2IntMap<Item> map, ItemStack stack) {
-		Item item = stack.getItem();
-		if (item == Items.AIR)
-			return;
-		map.put(item, map.getOrDefault(item, 0) + stack.getCount());
+		for (ItemRequirement.StackRequirement stack : requirement.getRequiredItems()) {
+			if (stack.stack.is(Items.AIR))
+				continue;
+			Entry entry = entries.stream()
+				.filter(e -> e.isFor(stack))
+				.findFirst()
+				.orElse(null);
+			if (entry == null) {
+				entry = new Entry(stack);
+				entries.add(entry);
+			}
+			entry.required += stack.stack.getCount();
+		}
 	}
 
 	public void collect(ItemStack stack) {
-		Item item = stack.getItem();
-		if (required.containsKey(item))
-			gathered.put(item, gathered.getOrDefault(item, 0) + stack.getCount());
+		for (Entry entry : entries)
+			if (entry.requirement.matches(stack)) {
+				entry.gathered += stack.getCount();
+				return;
+			}
 	}
 
 	public ItemStack createWrittenBook() {
@@ -70,21 +104,23 @@ public class MaterialChecklist {
 			pages.add(Filterable.passThrough(textComponent));
 		}
 
-		List<Item> keys = new ArrayList<>(required.keySet());
-		keys.sort((item1, item2) -> {
-			String name1 = item1.getName(item1.getDefaultInstance())
+		List<Entry> keys = new ArrayList<>(entries);
+		keys.sort((entry1, entry2) -> {
+			String name1 = entry1.displayStack()
+				.getHoverName()
 				.getString()
 				.toLowerCase(Locale.ENGLISH);
-			String name2 = item2.getName(item2.getDefaultInstance())
+			String name2 = entry2.displayStack()
+				.getHoverName()
 				.getString()
 				.toLowerCase(Locale.ENGLISH);
 			return name1.compareTo(name2);
 		});
 
 		textComponent = Component.empty();
-		List<Item> completed = new ArrayList<>();
-		for (Item item : keys) {
-			int amount = required.getInt(item) - gathered.getOrDefault(item, 0);
+		List<Entry> completed = new ArrayList<>();
+		for (Entry item : keys) {
+			int amount = item.required - item.gathered;
 
 			if (amount <= 0) {
 				completed.add(item);
@@ -100,10 +136,10 @@ public class MaterialChecklist {
 			}
 
 			itemsWritten++;
-			textComponent.append(entry(new ItemStack(item), amount, true));
+			textComponent.append(entry(item.displayStack(), amount, true));
 		}
 
-		for (Item item : completed) {
+		for (Entry item : completed) {
 			if (itemsWritten == MAX_ENTRIES_PER_PAGE) {
 				itemsWritten = 0;
 				textComponent.append(Component.literal("\n >>>")
@@ -113,7 +149,7 @@ public class MaterialChecklist {
 			}
 
 			itemsWritten++;
-			textComponent.append(entry(new ItemStack(item), required.getInt(item), false));
+			textComponent.append(entry(item.displayStack(), item.required, false));
 		}
 
 		pages.add(Filterable.passThrough(textComponent));

@@ -1,9 +1,12 @@
 package net.harou.schematiccannon.network;
 
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import net.harou.schematiccannon.ModConfig;
 import net.harou.schematiccannon.SchematicCannon;
+import net.harou.schematiccannon.schematic.SchematicItem;
 import net.harou.schematiccannon.schematic.SchematicPrinter;
 import net.harou.schematiccannon.util.BlockHelper;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -34,6 +37,9 @@ public record SchematicPlacePacket(ItemStack stack) implements ServerboundPacket
 			return;
 
 		boolean includeAir = ModConfig.get().creativePrintIncludesAir;
+		boolean frozen = SchematicItem.isFrozenPrint(stack);
+		// What was placed frozen, settled once all of it is there; not blocks that were already in place
+		LongLinkedOpenHashSet placed = new LongLinkedOpenHashSet();
 
 		while (printer.advanceCurrentPos()) {
 			if (!printer.shouldPlaceCurrent(level))
@@ -45,9 +51,17 @@ public record SchematicPlacePacket(ItemStack stack) implements ServerboundPacket
 					return;
 
 				CompoundTag data = BlockHelper.prepareBlockEntityData(level, state, blockEntity);
-				BlockHelper.placeSchematicBlock(level, state, pos, ItemStack.EMPTY, data);
+				BlockHelper.placeSchematicBlock(level, state, pos, ItemStack.EMPTY, data, frozen);
+				placed.add(pos.asLong());
+			}, (pos, state, blockEntity) -> {
+				BlockHelper.placeSchematicFluid(level, state, pos, frozen);
+				placed.add(pos.asLong());
 			}, (pos, entity) -> level.addFreshEntity(entity));
 		}
+
+		if (frozen)
+			for (long pos : placed)
+				BlockHelper.settleSchematicBlock(level, BlockPos.of(pos));
 	}
 
 	@Override

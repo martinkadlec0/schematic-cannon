@@ -14,9 +14,16 @@ public class ModPackets {
 		serverbound(SchematicPlacePacket.TYPE, SchematicPlacePacket.STREAM_CODEC);
 		serverbound(SchematicSyncPacket.TYPE, SchematicSyncPacket.STREAM_CODEC);
 		serverbound(SchematicUploadPacket.TYPE, SchematicUploadPacket.STREAM_CODEC);
+		serverbound(SchematicDownloadRequestPacket.TYPE, SchematicDownloadRequestPacket.STREAM_CODEC);
 
 		PayloadTypeRegistry.clientboundPlay()
 			.register(ConfigSyncPacket.TYPE, ConfigSyncPacket.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+			.register(SchematicDownloadPacket.TYPE, SchematicDownloadPacket.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+			.register(SchematicCacheResetPacket.TYPE, SchematicCacheResetPacket.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+			.register(SchematicPlacementPacket.TYPE, SchematicPlacementPacket.STREAM_CODEC);
 	}
 
 	private static <T extends ServerboundPacket> void serverbound(CustomPacketPayload.Type<T> type,

@@ -7,7 +7,7 @@ import org.joml.Matrix3x2fStack;
 
 import net.harou.schematiccannon.client.ModKeys;
 import net.harou.schematiccannon.client.gui.GuiTextures;
-import net.harou.schematiccannon.client.tools.ToolType;
+import net.harou.schematiccannon.client.tools.SchematicTool;
 import net.harou.schematiccannon.util.Lang;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -24,8 +24,8 @@ public class ToolSelectionScreen {
 		.getString();
 	private static final String HOLD_TO_FOCUS = "gui.toolmenu.focusKey";
 
-	protected List<ToolType> tools;
-	protected Consumer<ToolType> callback;
+	protected List<SchematicTool> tools;
+	protected Consumer<SchematicTool> callback;
 	public boolean focused;
 	private float yOffset;
 	protected int selection;
@@ -33,23 +33,24 @@ public class ToolSelectionScreen {
 	protected int w;
 	protected int h;
 
-	public ToolSelectionScreen(List<ToolType> tools, Consumer<ToolType> callback) {
+	public ToolSelectionScreen(List<SchematicTool> tools, Consumer<SchematicTool> callback) {
+		this(tools, tools.get(0), callback);
+	}
+
+	/**
+	 * @param initial the tool selected first, if it is one of the tools
+	 */
+	public ToolSelectionScreen(List<SchematicTool> tools, SchematicTool initial, Consumer<SchematicTool> callback) {
 		this.tools = tools;
 		this.callback = callback;
 		focused = false;
 		yOffset = 0;
-		selection = 0;
+		selection = Math.max(0, tools.indexOf(initial));
 
 		callback.accept(tools.get(selection));
 
 		w = Math.max(tools.size() * 50 + 30, 220);
 		h = 30;
-	}
-
-	public void setSelectedElement(ToolType tool) {
-		if (!tools.contains(tool))
-			return;
-		selection = tools.indexOf(tool);
 	}
 
 	public void cycle(int direction) {
@@ -108,11 +109,9 @@ public class ToolSelectionScreen {
 				alpha = 1;
 			}
 			tools.get(i)
-				.getIcon()
-				.render(graphics, x + i * 50 + 16, y + 12, ARGB.colorFromFloat(alpha, 0, 0, 0));
+				.renderIcon(graphics, x + i * 50 + 16, y + 12, ARGB.colorFromFloat(alpha, 0, 0, 0));
 			tools.get(i)
-				.getIcon()
-				.render(graphics, x + i * 50 + 16, y + 11, ARGB.colorFromFloat(alpha, 1, 1, 1));
+				.renderIcon(graphics, x + i * 50 + 16, y + 11, ARGB.colorFromFloat(alpha, 1, 1, 1));
 
 			matrixStack.popMatrix();
 		}

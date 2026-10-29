@@ -1,6 +1,6 @@
 package net.harou.schematiccannon.cannon;
 
-import net.harou.schematiccannon.registry.ModItems;
+import net.harou.schematiccannon.schematic.SchematicItem;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -28,7 +28,7 @@ public class SchematicannonInventory extends SimpleContainer {
 	@Override
 	public boolean canPlaceItem(int slot, ItemStack stack) {
 		return switch (slot) {
-		case SCHEMATIC_INPUT -> stack.is(ModItems.SCHEMATIC);
+		case SCHEMATIC_INPUT -> SchematicItem.isValid(stack);
 		case BOOK_INPUT -> stack.is(Items.BOOK) || stack.is(Items.WRITTEN_BOOK);
 		case GUNPOWDER -> stack.is(Items.GUNPOWDER);
 		default -> false;

@@ -1,7 +1,11 @@
 package net.harou.schematiccannon.util;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import org.jetbrains.annotations.Nullable;
 
+import net.harou.schematiccannon.SchematicCannon;
 import net.harou.schematiccannon.foundation.SyncedBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -12,6 +16,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -19,15 +24,22 @@ import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BrewingStandBlock;
+import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 
 public class BlockHelper {
 
@@ -107,24 +119,28 @@ public class BlockHelper {
 
 	public static void placeSchematicBlock(Level world, BlockState state, BlockPos target, ItemStack stack,
 										   @Nullable CompoundTag data) {
+		placeSchematicBlock(world, state, target, stack, data, false);
+	}
+
+	/**
+	 * @param frozen skip {@code onPlace} and {@code setPlacedBy}, so nothing reacts before the whole schematic is placed.
+	 *               {@link #settleSchematicBlock} runs them afterwards.
+	 * @return whether the block was placed, not e.g. evaporated
+	 */
+	public static boolean placeSchematicBlock(Level world, BlockState state, BlockPos target, ItemStack stack,
+										   @Nullable CompoundTag data, boolean frozen) {
 		state = getPlacedState(state);
 
-		if (world.environmentAttributes()
-			.getValue(EnvironmentAttributes.WATER_EVAPORATES, target) && state.getFluidState()
-			.is(FluidTags.WATER)) {
-			world.playSound(null, target, SoundEvents.FIRE_EXTINGUISH, SoundSource.BLOCKS, 0.5F,
-				2.6F + (world.getRandom().nextFloat() - world.getRandom().nextFloat()) * 0.8F);
-			if (world instanceof ServerLevel serverLevel)
-				serverLevel.sendParticles(ParticleTypes.LARGE_SMOKE, target.getX() + .5, target.getY() + .5,
-					target.getZ() + .5, 8, .25, .25, .25, 0);
+		if (evaporates(world, state, target)) {
 			Block.dropResources(state, world, target);
-			return;
+			return false;
 		}
 
 		if (state.getBlock() instanceof BaseRailBlock)
-			placeRailWithoutUpdate(world, state, target);
+			placeRailWithoutUpdate(world, state, target, frozen);
 		else
-			world.setBlock(target, state, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+			world.setBlock(target, state,
+				Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | (frozen ? Block.UPDATE_SKIP_ON_PLACE : 0));
 
 		if (data != null) {
 			BlockEntity blockEntity = world.getBlockEntity(target);
@@ -136,14 +152,183 @@ public class BlockHelper {
 			}
 		}
 
+		if (!frozen)
+			setPlacedBy(world, target, state, stack);
+		return true;
+	}
+
+	/**
+	 * Runs what a frozen placement skipped, once the whole schematic is there: {@code onPlace} (scheduled ticks, e.g.
+	 * of fluids and falling blocks), {@code setPlacedBy} (e.g. pistons checking their power) and neighbor updates.
+	 */
+	public static void settleSchematicBlock(Level world, BlockPos pos) {
+		BlockState state = world.getBlockState(pos);
+		if (state.isAir())
+			return;
+		// The other half is placed by the lower half or foot, like when printing without freezing
+		if (isPlacedByOtherHalf(state))
+			return;
+		settleSchematicBlock(world, pos, state);
+	}
+
+	private static void settleSchematicBlock(Level world, BlockPos pos, BlockState state) {
+		// Rails would reshape themselves, they keep the schematic's shape and only get what placeRailWithoutUpdate
+		// skipped in a frozen print (powered and detector rails react to it)
+		if (state.getBlock() instanceof BaseRailBlock)
+			world.neighborChanged(pos, world.getBlockState(pos.below())
+				.getBlock(), null);
+		else
+			state.onPlace(world, pos, Blocks.AIR.defaultBlockState(), false);
+		setPlacedBy(world, pos, state, ItemStack.EMPTY);
+		// Waterlogged blocks don't start their water flowing themselves
+		scheduleFluidTick(world, pos, state);
+		world.updateNeighborsAt(pos, state.getBlock(), null);
+	}
+
+	/**
+	 * A water or lava source, or a bubble column (water without an item of its own), placed from a bucket once all
+	 * blocks are there. Flowing fluid is never placed: it comes from the sources.
+	 */
+	public static boolean isFluidSource(BlockState state) {
+		return (state.getBlock() instanceof LiquidBlock || state.getBlock() instanceof BubbleColumnBlock)
+			&& state.getFluidState()
+				.isSource();
+	}
+
+	/**
+	 * The upper half of a door or two-block plant, or the head of a bed: the cannon places the lower half or foot, which
+	 * places this half with it.
+	 */
+	public static boolean isPlacedByOtherHalf(BlockState state) {
+		return isUpperHalf(state) || state.hasProperty(BlockStateProperties.BED_PART)
+			&& state.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD;
+	}
+
+	/**
+	 * Whether the spot of the upper half is still empty with its lower half below, which adds it when it settles (a
+	 * frozen print). It then takes its water from the spot, so a waterlogged one gets water there first.
+	 */
+	public static boolean awaitsUpperHalf(Level world, BlockPos pos, BlockState upperHalf) {
+		BlockState below = world.getBlockState(pos.below());
+		return isUpperHalf(upperHalf) && world.getBlockState(pos)
+			.isAir() && below.is(upperHalf.getBlock()) && !isUpperHalf(below);
+	}
+
+	/** The upper half of a door or two-block plant, which its lower half places */
+	public static boolean isUpperHalf(BlockState state) {
+		return state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
+			&& state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER;
+	}
+
+	/**
+	 * A block holding water: printed dry like any block, and filled from a bucket once all blocks are there.
+	 */
+	public static boolean isWaterlogged(BlockState state) {
+		return state.hasProperty(BlockStateProperties.WATERLOGGED) && state.getValue(BlockStateProperties.WATERLOGGED);
+	}
+
+	/**
+	 * Whether the fluid of the schematic block is missing where it fits: a source where the world has none (into air,
+	 * flowing fluid, or replaceable blocks like grass, never other blocks unless replaceBlocks), or the water of a
+	 * waterlogged block printed dry. Checked when the cannon fires, and again when the fluid lands, as the spot may have
+	 * changed in between.
+	 */
+	public static boolean fluidFits(Level world, BlockPos pos, BlockState state, boolean replaceBlocks) {
+		BlockState current = world.getBlockState(pos);
+		if (isWaterlogged(state))
+			return awaitsUpperHalf(world, pos, state) || current.hasProperty(BlockStateProperties.WATERLOGGED)
+				&& !current.getValue(BlockStateProperties.WATERLOGGED) && getPlacedState(current) == getPlacedState(state);
+		Fluid fluid = state.getFluidState()
+			.getType();
+		return isFluidSource(state) && !current.getFluidState()
+			.isSourceOfType(fluid) && (replaceBlocks || current.isAir() || current.getBlock() instanceof LiquidBlock
+				// Not vanilla's canBeReplaced(fluid): it also lets fluids replace signs, torches, rails and redstone
+				|| current.canBeReplaced());
+	}
+
+	/**
+	 * Places the fluid of a schematic block: the source itself, or the water of a waterlogged block into the block
+	 * printed dry before.
+	 *
+	 * @param frozen don't let it flow yet; {@link #settleSchematicBlock} starts it
+	 * @return whether the fluid was placed, not e.g. evaporated
+	 */
+	public static boolean placeSchematicFluid(Level world, BlockState state, BlockPos target, boolean frozen) {
+		if (evaporates(world, state, target))
+			return false;
+
+		BlockState placed = state;
+		if (isWaterlogged(state)) {
+			BlockState current = world.getBlockState(target);
+			if (awaitsUpperHalf(world, target, state))
+				placed = Blocks.WATER.defaultBlockState();
+			else if (current.hasProperty(BlockStateProperties.WATERLOGGED))
+				placed = current.setValue(BlockStateProperties.WATERLOGGED, true);
+			else
+				return false;
+		}
+		world.setBlock(target, placed,
+			Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | (frozen ? Block.UPDATE_SKIP_ON_PLACE : 0));
+		if (!frozen)
+			scheduleFluidTick(world, target, placed);
+		return true;
+	}
+
+	/**
+	 * Whether every chunk the box covers is loaded, e.g. before a check that could otherwise load or generate chunks.
+	 */
+	public static boolean isLoaded(Level world, BoundingBox box) {
+		int y = Mth.clamp(box.minY(), world.getMinY(), world.getMaxY());
+		for (int x = SectionPos.blockToSectionCoord(box.minX()); x <= SectionPos.blockToSectionCoord(box.maxX()); x++)
+			for (int z = SectionPos.blockToSectionCoord(box.minZ()); z <= SectionPos.blockToSectionCoord(box.maxZ()); z++)
+				if (!world.isLoaded(new BlockPos(SectionPos.sectionToBlockCoord(x), y, SectionPos.sectionToBlockCoord(z))))
+					return false;
+		return true;
+	}
+
+	/** Blocks whose setPlacedBy failed, logged once each */
+	private static final Set<Block> FAILED_SET_PLACED_BY = new HashSet<>();
+
+	/**
+	 * Runs what placing the block by hand does, without a player. Blocks may expect one, so a failure is logged (once per
+	 * block, a print may have thousands of it) and the print goes on.
+	 */
+	private static void setPlacedBy(Level world, BlockPos pos, BlockState state, ItemStack stack) {
 		try {
 			state.getBlock()
-				.setPlacedBy(world, target, state, null, stack);
-		} catch (Exception ignored) {
+				.setPlacedBy(world, pos, state, null, stack);
+		} catch (Exception e) {
+			if (FAILED_SET_PLACED_BY.add(state.getBlock()))
+				SchematicCannon.LOGGER.warn("Failed to set up the printed block {} at {}, not logged again for this block",
+					state, pos.toShortString(), e);
 		}
 	}
 
-	private static void placeRailWithoutUpdate(Level world, BlockState state, BlockPos target) {
+	/**
+	 * Whether the water of the block would evaporate there (e.g. in the Nether), with the hiss and smoke of a water
+	 * bucket emptied there.
+	 */
+	private static boolean evaporates(Level world, BlockState state, BlockPos target) {
+		if (!world.environmentAttributes()
+			.getValue(EnvironmentAttributes.WATER_EVAPORATES, target) || !state.getFluidState()
+				.is(FluidTags.WATER))
+			return false;
+		world.playSound(null, target, SoundEvents.FIRE_EXTINGUISH, SoundSource.BLOCKS, 0.5F,
+			2.6F + (world.getRandom().nextFloat() - world.getRandom().nextFloat()) * 0.8F);
+		if (world instanceof ServerLevel serverLevel)
+			serverLevel.sendParticles(ParticleTypes.LARGE_SMOKE, target.getX() + .5, target.getY() + .5,
+				target.getZ() + .5, 8, .25, .25, .25, 0);
+		return true;
+	}
+
+	private static void scheduleFluidTick(Level world, BlockPos pos, BlockState state) {
+		FluidState fluid = state.getFluidState();
+		if (!fluid.isEmpty())
+			world.scheduleTick(pos, fluid.getType(), fluid.getType()
+				.getTickDelay(world));
+	}
+
+	private static void placeRailWithoutUpdate(Level world, BlockState state, BlockPos target, boolean frozen) {
 		LevelChunk chunk = world.getChunkAt(target);
 		int idx = chunk.getSectionIndex(target.getY());
 		LevelChunkSection chunksection = chunk.getSection(idx);
@@ -157,8 +342,10 @@ public class BlockHelper {
 		world.getChunkSource()
 			.getLightEngine()
 			.checkBlock(target);
-		world.neighborChanged(target, world.getBlockState(target.below())
-			.getBlock(), null);
+		// Powered and detector rails react to it; a frozen print leaves that to settling
+		if (!frozen)
+			world.neighborChanged(target, world.getBlockState(target.below())
+				.getBlock(), null);
 	}
 
 }

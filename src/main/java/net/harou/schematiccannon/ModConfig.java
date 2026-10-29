@@ -29,6 +29,11 @@ public class ModConfig {
 
 	/** Whether placing a Schematic directly in Creative Mode should replace world blocks with Air */
 	public boolean creativePrintIncludesAir = false;
+	/**
+	 * Place blocks without updates and settle them once the print is complete, so half-built redstone does not fire.
+	 * Schematics can also ask for this themselves.
+	 */
+	public boolean alwaysFrozenPrint = false;
 	/** The amount of Schematics a player can upload until previous ones are overwritten. */
 	public int maxSchematics = 10;
 	/** The maximum allowed file size of uploaded Schematics. [in KiloBytes] */

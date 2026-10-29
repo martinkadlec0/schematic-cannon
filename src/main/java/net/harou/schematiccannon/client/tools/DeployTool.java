@@ -1,5 +1,7 @@
 package net.harou.schematiccannon.client.tools;
 
+import org.jetbrains.annotations.Nullable;
+
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 
@@ -64,6 +66,8 @@ public class DeployTool extends SchematicToolBase {
 		ms.translate(-xOrigin - rotationOffset.x, 0, -zOrigin - rotationOffset.z);
 
 		AABBOutline outline = schematicHandler.getOutline();
+		outline.getParams()
+			.colored(schematicHandler.getPreviewOutlineColor());
 		outline.render(ms, buffer, Vec3.ZERO, pt);
 		outline.getParams()
 			.withFaceTexture(null);
@@ -79,13 +83,24 @@ public class DeployTool extends SchematicToolBase {
 		return true;
 	}
 
-	@Override
-	public boolean handleRightClick() {
+	/**
+	 * Where a right click would deploy the schematic, see {@link SchematicTransformation#startAt}, or null if nothing is
+	 * targeted.
+	 */
+	@Nullable
+	public BlockPos getDeployTarget() {
 		if (selectedPos == null)
-			return super.handleRightClick();
+			return null;
 		Vec3 center = schematicHandler.getBounds()
 			.getCenter();
-		BlockPos target = selectedPos.offset(-((int) center.x), 0, -((int) center.z));
+		return selectedPos.offset(-((int) center.x), 0, -((int) center.z));
+	}
+
+	@Override
+	public boolean handleRightClick() {
+		BlockPos target = getDeployTarget();
+		if (target == null)
+			return super.handleRightClick();
 
 		ItemStack item = schematicHandler.getActiveSchematicItem();
 		if (item != null) {

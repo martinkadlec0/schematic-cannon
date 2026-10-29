@@ -22,7 +22,8 @@ public class IconButton extends BaseWidget {
 	protected void doRender(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTicks) {
 		GuiTextures button = !active ? GuiTextures.BUTTON_DISABLED
 			: isHovered && pressed ? GuiTextures.BUTTON_DOWN
-				: isHoveredOrFocused() ? GuiTextures.BUTTON_HOVER : green ? GuiTextures.BUTTON_GREEN : GuiTextures.BUTTON;
+				: isHoveredOrFocused() ? green ? GuiTextures.BUTTON_GREEN_HOVER : GuiTextures.BUTTON_HOVER
+					: green ? GuiTextures.BUTTON_GREEN : GuiTextures.BUTTON;
 
 		button.render(graphics, getX(), getY());
 		icon.render(graphics, getX() + 1, getY() + 1);

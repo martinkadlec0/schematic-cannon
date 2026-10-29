@@ -30,6 +30,7 @@ public enum GuiTextures {
 	BUTTON_DOWN("widgets", 36, 0, 18, 18),
 	BUTTON_GREEN("widgets", 72, 0, 18, 18),
 	BUTTON_DISABLED("widgets", 90, 0, 18, 18),
+	BUTTON_GREEN_HOVER("widgets", 108, 0, 18, 18),
 	INDICATOR("widgets", 0, 18, 18, 6),
 	INDICATOR_GREEN("widgets", 36, 18, 18, 6),
 	INDICATOR_YELLOW("widgets", 54, 18, 18, 6),

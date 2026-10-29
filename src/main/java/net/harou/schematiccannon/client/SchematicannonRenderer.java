@@ -35,6 +35,7 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 
 public class SchematicannonRenderer
@@ -124,7 +125,14 @@ public class SchematicannonRenderer
 		Vec3 blockLocation = blockLocationXZ.add(0.5, yOffset + 1.5, 0.5)
 			.add(cannonOffset);
 
-		if (launched instanceof LaunchedItem.ForBlockState forBlockState) {
+		if (launched instanceof LaunchedItem.ForBlockState forBlockState && forBlockState.fluid) {
+			// The bucket of the fluid: fluids have no block model, and a waterlogged block's would show the block
+			ItemStackRenderState item = new ItemStackRenderState();
+			itemModelResolver.updateForTopItem(item, new ItemStack(forBlockState.state.getFluidState()
+				.getType()
+				.getBucket()), ItemDisplayContext.GROUND, blockEntity.getLevel(), null, 0);
+			state.flyingItems.add(new FlyingItem(blockLocation, progress, null, item));
+		} else if (launched instanceof LaunchedItem.ForBlockState forBlockState) {
 			BlockModelRenderState block = new BlockModelRenderState();
 			blockModelResolver.update(block, forBlockState.state, BLOCK_DISPLAY_CONTEXT);
 			state.flyingItems.add(new FlyingItem(blockLocation, progress, block, null));

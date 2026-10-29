@@ -206,10 +206,10 @@ public class SchematicannonScreen extends BaseContainerScreen<SchematicannonMenu
 				button.setToolTip(button.getToolTip()
 					.get(0));
 				button.getToolTip()
-					.add(TooltipHelper.holdShift(ModKeys.sneakKeyDown()));
+					.add(TooltipHelper.holdShift(ModKeys.tooltipKeyDown()));
 			}
 
-		if (ModKeys.sneakKeyDown()) {
+		if (ModKeys.tooltipKeyDown()) {
 			fillToolTip(skipMissingButton, "skipMissing");
 			fillToolTip(skipBlockEntitiesButton, "skipBlockEntities");
 			fillToolTip(replaceLevelButtons.get(0), "dontReplaceSolid");

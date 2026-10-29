@@ -38,6 +38,11 @@ Note that Create's visual assets (unlike code) are under "All rights reserved li
 1. Put the Schematic into the **Schematicannon** and place chests (or any other inventories) with the needed blocks and
    gunpowder next to it.
 2. Press play. The cannon pauses when something is missing and continues by itself once it is there.
+   - Water and lava are printed from buckets (the empty buckets go back into the chests), after all blocks so they
+     can't flow out of the unfinished build. Only sources (and bubble columns) are placed, flowing fluid comes from
+     them. Waterlogged blocks are printed dry and then filled from a water bucket. When a block was left out (with "Skip
+     missing blocks", or one the cannon can't place, e.g. right next to it), the fluids are left out too, so they
+     can't flow out of the gap.
 3. Put a book into the cannon to get a checklist of the materials the schematic needs.
 
 ## Recipes
@@ -47,6 +52,7 @@ Note that Create's visual assets (unlike code) are under "All rights reserved li
 | Empty Schematic   | Iron Nugget above Paper above a wooden slab                                                  |
 | Schematic and Pen | Empty Schematic + Ink Sac + Copper Nugget                                                    |
 | Schematic Table   | 3 wooden slabs on top of 2 Smooth Stone (in a T shape)                                       |
+| Schematic copy    | A Schematic and an Empty Schematic, anywhere in the grid; the original is kept (like copying a book) |
 | Schematicannon    | Iron Block on top of an Iron Block between 2 Copper Ingots, over Smooth Stone, Dispenser, Smooth Stone |
 
 ## Requirements

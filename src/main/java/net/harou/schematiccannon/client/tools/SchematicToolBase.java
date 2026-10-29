@@ -139,7 +139,7 @@ public abstract class SchematicToolBase {
 		AABBOutline outline = schematicHandler.getOutline();
 		outline.getParams()
 			.highlightFace(renderSelectedFace ? selectedFace : null)
-			.colored(0x6886c5)
+			.colored(schematicHandler.getOutlineColor())
 			.withFaceTexture(ModRenderTypes.CHECKERED)
 			.lineWidth(1 / 16f);
 		outline.render(ms, buffer, Vec3.ZERO, pt);

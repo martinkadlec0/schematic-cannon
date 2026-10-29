@@ -34,7 +34,15 @@ public class ModKeys {
 	}
 
 	/**
-	 * The sneak key (Shift by default) shows item descriptions and scrolls faster in lists.
+	 * Shift itself, not the sneak key: shows tooltip details, as in vanilla and most mods, wherever sneak is bound.
+	 */
+	public static boolean tooltipKeyDown() {
+		return Minecraft.getInstance()
+			.hasShiftDown();
+	}
+
+	/**
+	 * The sneak key (Shift by default) scrolls faster in lists.
 	 */
 	public static boolean sneakKeyDown() {
 		return isHeld(Minecraft.getInstance().options.keyShift);

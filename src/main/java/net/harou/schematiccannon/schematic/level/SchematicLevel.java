@@ -225,6 +225,8 @@ public class SchematicLevel extends Level implements ServerLevelAccessor {
 		return setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 	}
 
+	// BlockEntity#setBlockState has no replacement; vanilla calls it the same way when a block changes its state
+	@SuppressWarnings("deprecation")
 	@Override
 	public boolean setBlock(BlockPos pos, BlockState state, int flags) {
 		// Blocks are stored relative to the anchor, block entities by their world position

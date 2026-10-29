@@ -6,6 +6,7 @@ import java.util.List;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.harou.schematiccannon.util.BlockHelper;
 import net.harou.schematiccannon.util.NBTProcessors;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -99,7 +100,22 @@ public class ItemRequirement {
 		return new ItemRequirement(item);
 	}
 
+	/**
+	 * The bucket for the fluid of a schematic block, placed after all blocks: a water or lava source, or the water of a
+	 * waterlogged block (see {@link BlockHelper#isFluidSource} and {@link BlockHelper#isWaterlogged}).
+	 */
+	public static ItemRequirement ofFluid(BlockState state) {
+		Item bucket = state.getFluidState()
+			.getType()
+			.getBucket();
+		return bucket == Items.AIR ? INVALID : new ItemRequirement(bucket);
+	}
+
 	public static ItemRequirement of(Entity entity) {
+		EntityPlacement placement = EntityPlacements.find(entity);
+		if (placement != null)
+			return new ItemRequirement(placement.requirement(entity));
+
 		if (entity instanceof ItemFrame itemFrame) {
 			ItemStack frame = itemFrame.getFrameItemStack();
 			ItemStack displayedItem = NBTProcessors.withUnsafeComponentsDiscarded(itemFrame.getItem());

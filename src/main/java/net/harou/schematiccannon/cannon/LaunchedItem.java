@@ -28,6 +28,8 @@ public abstract class LaunchedItem {
 	public int ticksRemaining;
 	public BlockPos target;
 	public ItemStack stack;
+	/** Whether it was placed when it landed */
+	public boolean placed;
 
 	private LaunchedItem(BlockPos start, BlockPos target, ItemStack stack) {
 		this(target, stack, ticksForDistance(start, target), ticksForDistance(start, target));
@@ -55,7 +57,7 @@ public abstract class LaunchedItem {
 		if (world.isClientSide())
 			return false;
 
-		place(world);
+		placed = place(world);
 		return true;
 	}
 
@@ -73,7 +75,8 @@ public abstract class LaunchedItem {
 		return launched;
 	}
 
-	abstract void place(Level world);
+	/** @return whether anything was placed */
+	abstract boolean place(Level world);
 
 	void readData(ValueInput input) {
 		target = input.read("Target", BlockPos.CODEC)
@@ -87,20 +90,30 @@ public abstract class LaunchedItem {
 	public static class ForBlockState extends LaunchedItem {
 		public BlockState state;
 		public CompoundTag data;
+		/** Placed without updates, see {@link BlockHelper#placeSchematicBlock(Level, BlockState, BlockPos, ItemStack, CompoundTag, boolean)} */
+		public boolean frozen;
+		/** The fluid of the block is placed, see {@link BlockHelper#placeSchematicFluid} */
+		public boolean fluid;
 
 		ForBlockState() {
 		}
 
-		public ForBlockState(BlockPos start, BlockPos target, ItemStack stack, BlockState state, CompoundTag data) {
+		public ForBlockState(BlockPos start, BlockPos target, ItemStack stack, BlockState state, CompoundTag data,
+			boolean frozen) {
 			super(start, target, stack);
 			this.state = state;
 			this.data = data;
+			this.frozen = frozen;
 		}
 
 		@Override
 		public void write(ValueOutput output) {
 			super.write(output);
 			output.store("BlockState", BlockState.CODEC, state);
+			if (frozen)
+				output.putBoolean("Frozen", true);
+			if (fluid)
+				output.putBoolean("Fluid", true);
 			if (data != null) {
 				data.remove("x");
 				data.remove("y");
@@ -117,11 +130,17 @@ public abstract class LaunchedItem {
 				.orElse(Blocks.AIR.defaultBlockState());
 			data = input.read("Data", CompoundTag.CODEC)
 				.orElse(null);
+			frozen = input.getBooleanOr("Frozen", false);
+			fluid = input.getBooleanOr("Fluid", false);
 		}
 
 		@Override
-		void place(Level world) {
-			BlockHelper.placeSchematicBlock(world, state, target, stack, data);
+		boolean place(Level world) {
+			if (!fluid)
+				return BlockHelper.placeSchematicBlock(world, state, target, stack, data, frozen);
+			// The spot may have changed while it flew, e.g. a chest placed there, which a fluid never replaces
+			return BlockHelper.fluidFits(world, target, state, false) && BlockHelper.placeSchematicFluid(world, state,
+				target, frozen);
 		}
 
 	}
@@ -175,10 +194,9 @@ public abstract class LaunchedItem {
 		}
 
 		@Override
-		void place(Level world) {
+		boolean place(Level world) {
 			// Schematic entities are created with the real level (SchematicLevel#getLevel)
-			if (entity != null)
-				world.addFreshEntity(entity);
+			return entity != null && world.addFreshEntity(entity);
 		}
 
 	}

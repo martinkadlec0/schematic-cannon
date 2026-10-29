@@ -12,7 +12,6 @@ import net.harou.schematiccannon.client.gui.widget.IconButton;
 import net.harou.schematiccannon.client.gui.widget.Label;
 import net.harou.schematiccannon.client.gui.widget.SelectionScrollInput;
 import net.harou.schematiccannon.registry.ModDataComponents;
-import net.harou.schematiccannon.registry.ModItems;
 import net.harou.schematiccannon.util.Lang;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.harou.schematiccannon.client.gui.widget.FilteredEditBox;
@@ -155,8 +154,11 @@ public class SchematicEditScreen extends BaseScreen {
 		graphics.text(font, title, x + (background.getWidth() - 8 - font.width(title)) / 2, y + 4, 0xFF505050,
 			false);
 
-		BaseContainerScreen.renderScaledItem(graphics, new ItemStack(ModItems.SCHEMATIC),
-			x + background.getWidth() + 6, y + background.getHeight() - 40, 3);
+		// Gone while the screen is open, e.g. by /clear or switching to spectator
+		ItemStack schematic = handler.getActiveSchematicItem();
+		if (schematic != null)
+			BaseContainerScreen.renderScaledItem(graphics, schematic, x + background.getWidth() + 6,
+				y + background.getHeight() - 40, 3);
 	}
 
 	@Override

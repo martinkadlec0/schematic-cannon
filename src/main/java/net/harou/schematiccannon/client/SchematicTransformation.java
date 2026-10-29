@@ -176,6 +176,13 @@ public class SchematicTransformation {
 		return BlockPos.containing(vec.x, vec.y, vec.z);
 	}
 
+	/**
+	 * The anchor the schematic would get if it was moved to the given target, see {@link #moveTo}.
+	 */
+	public BlockPos anchorFor(BlockPos target) {
+		return getAnchor().offset(target.subtract(this.target));
+	}
+
 	public BlockPos fromAnchor(BlockPos pos) {
 		Vec3 vec = Vec3.ZERO.add(.5, 0, .5);
 		Vec3 rotationOffset = getRotationOffset(isBothMirrored());

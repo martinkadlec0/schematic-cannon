@@ -83,6 +83,7 @@ public class ConfigScreen extends Screen {
 		addInt(rows, "schematicannonShotsPerGunpowder", c -> c.schematicannonShotsPerGunpowder,
 			(c, v) -> c.schematicannonShotsPerGunpowder = v);
 		addBool(rows, "creativePrintIncludesAir", config.creativePrintIncludesAir, v -> config.creativePrintIncludesAir = v);
+		addBool(rows, "alwaysFrozenPrint", config.alwaysFrozenPrint, v -> config.alwaysFrozenPrint = v);
 		addInt(rows, "maxSchematics", c -> c.maxSchematics, (c, v) -> c.maxSchematics = v);
 		addInt(rows, "maxTotalSchematicSize", c -> c.maxTotalSchematicSize, (c, v) -> c.maxTotalSchematicSize = v);
 		addInt(rows, "maxSchematicPacketSize", c -> c.maxSchematicPacketSize, (c, v) -> c.maxSchematicPacketSize = v);
